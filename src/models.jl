@@ -296,8 +296,8 @@ function realized_return(
         # crowding, and dollar saturation is the economically correct signal.
         # =====================================================================
         K_sat = hasfield(typeof(config), :CROWDING_CAPACITY_RATIO_K) ? config.CROWDING_CAPACITY_RATIO_K : 1.5
-        γ = hasfield(typeof(config), :CROWDING_CONVEXITY_GAMMA) ? config.CROWDING_CONVEXITY_GAMMA : 2.0
-        λ = hasfield(typeof(config), :CROWDING_STRENGTH_LAMBDA) ? config.CROWDING_STRENGTH_LAMBDA : 0.50
+        γ = hasfield(typeof(config), :CROWDING_CONVEXITY_GAMMA) ? config.CROWDING_CONVEXITY_GAMMA : 1.5
+        λ = hasfield(typeof(config), :CROWDING_STRENGTH_LAMBDA) ? config.CROWDING_STRENGTH_LAMBDA : 1.5
 
         # Capital saturation: how full is the opportunity relative to capacity?
         saturation = (hasfield(typeof(opp), :capacity) && opp.capacity > 0.0) ?

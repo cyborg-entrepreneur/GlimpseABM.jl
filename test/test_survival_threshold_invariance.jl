@@ -44,4 +44,42 @@ end
     end
 end
 
+@testset "SURVIVAL_COUNTS_INFLIGHT: in-flight capital counts toward net worth" begin
+    # initial_capital = $5M  ->  equity floor = 0.40 * $5M = $2M; tech liquidity
+    # floor ~ $1.95M. Deployed-but-maturing (in-flight) capital should lift
+    # effective net worth under the toggle, flipping the survival outcome.
+    function _inflight_agent(; cash::Float64, inflight::Float64, counts_inflight::Bool)
+        cfg = EmergentConfig(N_AGENTS=2, N_ROUNDS=1, RANDOM_SEED=1)
+        GlimpseABM.initialize!(cfg)
+        cfg.INSOLVENCY_GRACE_ROUNDS = 1
+        cfg.SURVIVAL_COUNTS_INFLIGHT = counts_inflight
+        a = EmergentAgent(1, cfg; primary_sector="tech", initial_capital=5_000_000.0,
+                          fixed_ai_level="premium", rng=MersenneTwister(1))
+        GlimpseABM.set_capital!(a, cash)
+        if inflight > 0.0
+            push!(a.active_investments, Dict{String,Any}("amount" => inflight))
+        end
+        return a
+    end
+
+    @testset "liquidity leg" begin
+        # $1M cash is below the liquidity floor; $4M in-flight lifts net worth to $5M.
+        @test GlimpseABM.check_survival!(
+            _inflight_agent(cash=1_000_000.0, inflight=4_000_000.0, counts_inflight=true), 1) === true
+        a_off = _inflight_agent(cash=1_000_000.0, inflight=4_000_000.0, counts_inflight=false)
+        @test GlimpseABM.check_survival!(a_off, 1) === false
+        @test a_off.failure_reason == "liquidity_failure"
+    end
+
+    @testset "equity leg" begin
+        # $1.975M cash clears the liquidity floor but is below the $2M equity floor
+        # (ratio 0.395 < 0.40); $1M in-flight lifts the ratio above the floor.
+        @test GlimpseABM.check_survival!(
+            _inflight_agent(cash=1_975_000.0, inflight=1_000_000.0, counts_inflight=true), 1) === true
+        a_off = _inflight_agent(cash=1_975_000.0, inflight=1_000_000.0, counts_inflight=false)
+        @test GlimpseABM.check_survival!(a_off, 1) === false
+        @test a_off.failure_reason == "equity_failure"
+    end
+end
+
 println("Survival threshold invariance tests passed.")
