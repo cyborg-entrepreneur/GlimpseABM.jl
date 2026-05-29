@@ -1,0 +1,36 @@
+# Julia artifacts
+*.jl.cov
+*.jl.mem
+deps/deps.jl
+deps/build.log
+
+# Generated outputs
+results/
+output/
+*.arrow
+*.jld2
+*.log
+
+# Archive (development files)
+.archive/
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Test artifacts
+test/output/
+
+# Large binary files
+*.pdf
+*.png

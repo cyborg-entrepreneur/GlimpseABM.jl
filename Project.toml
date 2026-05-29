@@ -1,0 +1,53 @@
+name = "GlimpseABM"
+uuid = "e8f3c291-4a2e-4d8b-9f3a-1b2c3d4e5f6a"
+version = "0.1.0"
+authors = ["David M. Townsend", "Richard A. Hunt", "Judy Rady", "Parul Manocha", "Ju hyeong Jin"]
+
+[deps]
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
+Colors = "5ae59095-9a9b-59fe-a467-6f913c188581"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+GLM = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
+HypothesisTests = "09f84164-cd44-5f33-b23f-e6b0d136a0d5"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+MixedModels = "ff71e718-51f3-5ec2-a782-8ffcbfa3c316"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+RandomNumbers = "e6cf234a-135c-5ec9-84dd-332b85af5143"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
+
+[compat]
+ArgParse = "1"
+Arrow = "2"
+CSV = "0.10.15"
+CairoMakie = "0.15.8"
+CategoricalArrays = "1.0.2"
+Colors = "0.13.1"
+DataFrames = "1"
+Distributions = "0.25"
+GLM = "1.9.2"
+HypothesisTests = "0.11.6"
+JLD2 = "0.4"
+JSON3 = "1"
+MixedModels = "5.2.2"
+Printf = "1.11.0"
+SpecialFunctions = "2.6.1"
+StatsBase = "0.34"
+julia = "1.9"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
