@@ -20,6 +20,7 @@ Usage:
 using CairoMakie
 using CSV
 using DataFrames
+using Distributions
 using Printf
 using Statistics
 
@@ -483,6 +484,118 @@ function fig_market_commitment(scorecard::AbstractDataFrame, outdir; condition="
 end
 
 # ---------------------------------------------------------------------------
+# T3 — intersection-union test on the paired premium−none paradox contrast
+# ---------------------------------------------------------------------------
+
+"""One-sided t-test (H1: mean > 0). Returns (mean, t, p, n) where n is the
+non-NaN sample size, mirroring scipy.stats.t.sf semantics."""
+function _one_sided_t(x::AbstractVector{<:Real})
+    v = collect(skipmissing(x))
+    v = filter(!isnan, Float64.(v))
+    n = length(v)
+    if n < 2
+        return 0.0, 0.0, 1.0, n
+    end
+    m = mean(v); sd = std(v; corrected=true)
+    se = sd / sqrt(n)
+    t = se > 0 ? m / se : (m > 0 ? Inf : (m < 0 ? -Inf : 0.0))
+    p = isfinite(t) ? Float64(ccdf(TDist(n - 1), t)) : (t > 0 ? 0.0 : 1.0)
+    return m, t, p, n
+end
+
+"""Wilson score interval for a binomial proportion (k/n) at z=1.96."""
+function _wilson_ci(k::Int, n::Int; z::Float64=1.96)
+    if n == 0
+        return (NaN, NaN)
+    end
+    ph = k / n
+    d = 1 + z^2 / n
+    c = ph + z^2 / (2 * n)
+    h = z * sqrt(ph * (1 - ph) / n + z^2 / (4 * n^2))
+    return ((c - h) / d, (c + h) / d)
+end
+
+"""Paradox strength via an intersection-union test (paired, premium vs none).
+
+The paradox is a conjunction (first-order actor-ignorance compression AND
+epistemic-horizon recession). Its principled test is the IUT: reject "no
+paradox" iff both one-sided component tests reject. Strength = min component
+t; p = max component one-sided p. Replaces the ad-hoc paradox_alignment_score.
+Consumes the per-run file so the contrasts are paired within seed."""
+function table_paradox_iut(results_dir, outdir)
+    pr_path = joinpath(results_dir, "robustness_suite_per_run.csv")
+    if !isfile(pr_path)
+        return nothing
+    end
+    df = CSV.read(pr_path, DataFrame)
+    second = ["practical_indeterminism", "agentic_novelty", "competitive_recursion"]
+    hcols = ["all_agent_emergent_$(d)" for d in second]
+    horizon_mat = Matrix{Float64}(undef, nrow(df), length(hcols))
+    for (j, c) in enumerate(hcols)
+        horizon_mat[:, j] = Float64.(df[!, c])
+    end
+    df[!, :horizon] = vec(mean(horizon_mat; dims=2))
+    RA = "all_agent_emergent_actor_ignorance"
+
+    rows = NamedTuple[]
+    for cond in unique(string.(df.condition))
+        g = df[string.(df.condition) .== cond, :]
+        none_rows = g[string.(g.tier) .== "none", :]
+        prem_rows = g[string.(g.tier) .== "premium", :]
+        idx_none = Set(none_rows.run_idx)
+        idx_prem = Set(prem_rows.run_idx)
+        common = sort(collect(intersect(idx_none, idx_prem)))
+        if isempty(common)
+            continue
+        end
+        no = sort(none_rows[in.(none_rows.run_idx, Ref(common)), :], :run_idx)
+        pr = sort(prem_rows[in.(prem_rows.run_idx, Ref(common)), :], :run_idx)
+        gf = Float64.(no[!, RA]) .- Float64.(pr[!, RA])          # first-order compression (none − premium)
+        gh = Float64.(pr.horizon) .- Float64.(no.horizon)        # horizon recession (premium − none)
+        ce = Float64.(pr.mean_competition) .- Float64.(no.mean_competition)
+        sv = (Float64.(pr.survival_rate) .- Float64.(no.survival_rate)) .* 100
+        _, tf, pf, nf = _one_sided_t(gf)
+        _, th, ph, _  = _one_sided_t(gh)
+        mask = .!(isnan.(gf) .| isnan.(gh))
+        k = sum((gf[mask] .> 0) .& (gh[mask] .> 0))
+        nq = sum(mask)
+        lo, hi = _wilson_ci(Int(k), Int(nq))
+        push!(rows, (
+            condition = cond,
+            n = nf,
+            first_order_t = tf,
+            horizon_t = th,
+            iut_min_t = min(tf, th),
+            iut_p = max(pf, ph),
+            paradox_supported_iut = max(pf, ph) < 0.05,
+            quadrant_prop = nq > 0 ? k / nq : NaN,
+            quadrant_ci_lo = lo,
+            quadrant_ci_hi = hi,
+            comp_excess = mean(filter(!isnan, ce)),
+            survival_trap_pp = mean(filter(!isnan, sv)),
+            binding_channel = th < tf ? "horizon" : "first_order",
+        ))
+    end
+    T = sort(DataFrame(rows), :iut_min_t, rev=true)
+
+    # CSV: render Bool as capitalized True/False to match the Python reference.
+    csv_T = copy(T)
+    csv_T.paradox_supported_iut = [v ? "True" : "False" for v in csv_T.paradox_supported_iut]
+    CSV.write(joinpath(outdir, "T3_paradox_iut.csv"), csv_T)
+
+    open(joinpath(outdir, "T3_paradox_iut.md"), "w") do f
+        write(f, "# Paradox strength — intersection-union test (paired, premium vs none)\n\n")
+        write(f, "`iut_min_t` = min(first-order t, horizon t); `iut_p` = max(one-sided p's); the paradox " *
+                 "is supported iff BOTH component tests reject (p<0.05). `quadrant_prop` = fraction of " *
+                 "paired seeds with both contrasts > 0 (Wilson CI). First-order channel is realized " *
+                 "actor-ignorance compression. Replaces the ad-hoc paradox_alignment_score.\n\n")
+        write(f, to_markdown(T; floatfmt=".3f"))
+        write(f, "\n")
+    end
+    return T
+end
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -534,10 +647,15 @@ function main(argv=ARGS)
     fig_perceived_vs_realized(sc, outdir; condition=condition)
     fig_paradox_coexistence(sc, outdir)
     fig_market_commitment(sc, outdir; condition=condition)
+    t3 = table_paradox_iut(results_dir, outdir)
 
     n_supported = "paradox_logic_supported" in names(t1) ?
         count(istrue, t1.paradox_logic_supported) : 0
     println("\nparadox_logic_supported in $n_supported/$(nrow(t1)) conditions (frontier tier)")
+    if t3 !== nothing
+        n_iut = count(==(true), t3.paradox_supported_iut)
+        println("IUT-supported (paired, p<0.05) in $n_iut/$(nrow(t3)) conditions")
+    end
     println("exhibits written to $outdir")
     for f in sort(readdir(outdir))
         println("   ", f)
