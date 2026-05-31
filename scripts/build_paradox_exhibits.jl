@@ -553,6 +553,8 @@ function table_paradox_iut(results_dir, outdir)
         gf = Float64.(no[!, RA]) .- Float64.(pr[!, RA])          # first-order compression (none − premium)
         gh = Float64.(pr.horizon) .- Float64.(no.horizon)        # horizon recession (premium − none)
         ce = Float64.(pr.mean_competition) .- Float64.(no.mean_competition)
+        vog = Float64.(pr.mean_visible_opportunities) .- Float64.(no.mean_visible_opportunities)
+        iog = Float64.(pr.mean_info_quality_used) .- Float64.(no.mean_info_quality_used)
         sv = (Float64.(pr.survival_rate) .- Float64.(no.survival_rate)) .* 100
         _, tf, pf, nf = _one_sided_t(gf)
         _, th, ph, _  = _one_sided_t(gh)
@@ -564,6 +566,8 @@ function table_paradox_iut(results_dir, outdir)
             condition = cond,
             n = nf,
             first_order_t = tf,
+            visible_opp_gain = mean(filter(!isnan, vog)),
+            info_quality_gain = mean(filter(!isnan, iog)),
             horizon_t = th,
             iut_min_t = min(tf, th),
             iut_p = max(pf, ph),
@@ -588,7 +592,11 @@ function table_paradox_iut(results_dir, outdir)
         write(f, "`iut_min_t` = min(first-order t, horizon t); `iut_p` = max(one-sided p's); the paradox " *
                  "is supported iff BOTH component tests reject (p<0.05). `quadrant_prop` = fraction of " *
                  "paired seeds with both contrasts > 0 (Wilson CI). First-order channel is realized " *
-                 "actor-ignorance compression. Replaces the ad-hoc paradox_alignment_score.\n\n")
+                 "actor-ignorance compression. `visible_opp_gain` and `info_quality_gain` are the " *
+                 "first-order **inputs** AI delivers (more visible opportunities, better info quality) — " *
+                 "they can be positive even when the realized compression (`first_order_t`) reverses, " *
+                 "surfacing the decorrelation pattern (see `NO_AI_ERRORS`). Replaces the ad-hoc " *
+                 "paradox_alignment_score.\n\n")
         write(f, to_markdown(T; floatfmt=".3f"))
         write(f, "\n")
     end

@@ -294,15 +294,39 @@ function suite_frame(df::AbstractDataFrame)
     return DataFrame(rows)
 end
 
-const LABEL_THESE = Set([
-    "NO_AI_ERRORS", "ALL_FAVORABLE_TO_FRONTIER", "BASELINE", "AI_COST_2X",
-    "MARKET_DENSE_LOW_CAPACITY", "FRONTIER_PUBLIC_OMNISCIENCE",
-    "SHAM_AI_LABELS_FREE", "NO_INFORMATION_ADVANTAGE_FREE", "MARKET_SLACK_HIGH_CAPACITY",
-])
+# Category sets for D2 styling (mirrors the Python reference).
+const PLACEBO_SET   = Set(["SHAM_AI_LABELS_FREE", "NO_INFORMATION_ADVANTAGE_FREE", "EMERGENT_ADOPTION_BASELINE"])
+const FAVORABLE_SET = Set(["ALL_FAVORABLE_TO_FRONTIER"])
+const HIGH_DECOR_SET = Set(["NO_AI_ERRORS", "FRONTIER_PUBLIC_OMNISCIENCE", "FRONTIER_REASONING_NO_ERROR"])
+
+# Per-condition (px-offset, draw_leader_line?) spec for D2 labels.
+# Conditions not present here are not labelled; only those in label_specs print.
+const LABEL_SPECS = Dict(
+    "ALL_FAVORABLE_TO_FRONTIER"     => ((10.0, 0.0),    false),
+    "NO_AI_ERRORS"                  => ((8.0, 8.0),     false),
+    "FRONTIER_PUBLIC_OMNISCIENCE"   => ((-6.0, -16.0),  true),
+    "BASELINE"                      => ((22.0, 10.0),   true),
+    "AI_COST_2X"                    => ((8.0, -10.0),   false),
+    "MARKET_DENSE_LOW_CAPACITY"     => ((10.0, 8.0),    false),
+    "MARKET_SLACK_HIGH_CAPACITY"    => ((10.0, 6.0),    false),
+    "SHAM_AI_LABELS_FREE"           => ((18.0, -18.0),  true),
+    "NO_INFORMATION_ADVANTAGE_FREE" => ((-22.0, 14.0),  true),
+    "EMERGENT_ADOPTION_BASELINE"    => ((-18.0, -16.0), true),
+)
 
 """Title-case 'foo_bar baz' style strings (matches Python `.replace("_", " ").title()`)."""
 function title_case(s::AbstractString)
     return join(uppercasefirst.(lowercase.(split(replace(s, "_" => " "), " "))), " ")
+end
+
+"""Convert (dx_px, dy_px) pixel offsets — interpreted in the matplotlib sense
+relative to a 170-DPI render — into data-space deltas for placing labels and
+leader-line endpoints. The numerator pairs the matplotlib-side annotation
+fontsize (~8pt at 170 DPI) with the larger figure CairoMakie panel; the
+denominator scales the offset by the data span so labels float at roughly the
+same visual distance regardless of axis units."""
+function _px_to_data_offsets(dx_px, dy_px, xspan, yspan, axis_w_px, axis_h_px)
+    return (dx_px / axis_w_px) * xspan, (dy_px / axis_h_px) * yspan
 end
 
 function fig_suitewide(C::AbstractDataFrame, outdir)
@@ -310,6 +334,26 @@ function fig_suitewide(C::AbstractDataFrame, outdir)
     Label(fig[0, 1:2],
           "Suite-wide: the frontier survival trap scales with correlated-commitment crowding";
           fontsize = 13)
+
+    # Category style helper. Returns the kwargs we pass to scatter!. Placebo
+    # points are rendered as open gray circles (transparent fill + gray stroke);
+    # the rest are filled colour discs / a green up-triangle.
+    function style_for(cond::AbstractString)
+        if cond in FAVORABLE_SET
+            return (color = colorant"#27ae60", marker = :utriangle, markersize = 13,
+                    strokecolor = :white, strokewidth = 0.9)
+        elseif cond in HIGH_DECOR_SET
+            return (color = colorant"#c0392b", marker = :circle, markersize = 11,
+                    strokecolor = :white, strokewidth = 0.9)
+        elseif cond in PLACEBO_SET
+            return (color = RGBAf(0, 0, 0, 0), marker = :circle, markersize = 10,
+                    strokecolor = colorant"#7f8c8d", strokewidth = 1.0)
+        else
+            return (color = colorant"#2c3e50", marker = :circle, markersize = 8,
+                    strokecolor = :white, strokewidth = 0.6)
+        end
+    end
+
     for (panel_i, (xcol, xlab)) in enumerate([
             (:comp_excess, "frontier-relative excess competition (premium − none)"),
             (:horizon_d,   "epistemic-horizon recession (premium − none)"),
@@ -331,20 +375,66 @@ function fig_suitewide(C::AbstractDataFrame, outdir)
         xs = collect(range(minimum(x), maximum(x); length = 50))
         lines!(ax, xs, b0 .+ b1 .* xs; color = colorant"#c0392b", linewidth = 1.6,
                linestyle = :dash)
-        scatter!(ax, x, y; markersize = 9, color = colorant"#34495e")
-        # Pad the right edge so the outermost condition label (e.g. Frontier Public
-        # Omniscience) doesn't clip — mirrors matplotlib's default loose limits.
-        xspan = (length(x) > 1 && maximum(x) != minimum(x)) ? (maximum(x) - minimum(x)) : 1.0
-        xlims!(ax, minimum(x) - 0.04 * xspan, maximum(x) + 0.18 * xspan)
+        # Per-point scatter so each condition gets its categorical styling.
         for row in eachrow(C)
-            if string(row.condition) in LABEL_THESE
-                text!(ax, Float64(row[xcol]), Float64(row.trap);
-                      text = title_case(string(row.condition)),
-                      offset = (6.0, 6.0), fontsize = 8,
-                      color = colorant"#333333", align = (:left, :bottom))
+            sty = style_for(string(row.condition))
+            scatter!(ax, [Float64(row[xcol])], [Float64(row.trap)];
+                     color = sty.color, marker = sty.marker, markersize = sty.markersize,
+                     strokecolor = sty.strokecolor, strokewidth = sty.strokewidth)
+        end
+        # Pad axis to make room for the labels around the rim.
+        xspan = (length(x) > 1 && maximum(x) != minimum(x)) ? (maximum(x) - minimum(x)) : 1.0
+        yspan = (length(y) > 1 && maximum(y) != minimum(y)) ? (maximum(y) - minimum(y)) : 1.0
+        xlims!(ax, minimum(x) - 0.10 * xspan, maximum(x) + 0.22 * xspan)
+        ylims!(ax, minimum(y) - 0.10 * yspan, maximum(y) + 0.12 * yspan)
+
+        # Labels with optional leader lines (callouts). CairoMakie has no
+        # `arrowprops`, so each leader is a thin gray line segment drawn from
+        # the data point to a small inset near the label start. Offsets mirror
+        # the matplotlib spec proportionally via panel dimensions (~640×540 px).
+        axis_w_px, axis_h_px = 640.0, 540.0
+        for row in eachrow(C)
+            cond_s = string(row.condition)
+            spec = get(LABEL_SPECS, cond_s, nothing)
+            spec === nothing && continue
+            (dx_px, dy_px), with_arrow = spec
+            dx, dy = _px_to_data_offsets(dx_px, dy_px, xspan, yspan, axis_w_px, axis_h_px)
+            px = Float64(row[xcol]); py = Float64(row.trap)
+            lx, ly = px + dx, py + dy
+            if with_arrow
+                # Shrink the leader away from the point a little so it visually
+                # detaches (matches matplotlib's shrinkA=0, shrinkB=2).
+                shrink_frac = 0.18
+                sx = lx - shrink_frac * (lx - px)
+                sy = ly - shrink_frac * (ly - py)
+                lines!(ax, [px, sx], [py, sy];
+                       color = colorant"#888888", linewidth = 0.6)
             end
+            align = dx >= 0 ? (:left, :bottom) : (:right, :bottom)
+            text!(ax, lx, ly; text = title_case(cond_s),
+                  fontsize = 8, color = colorant"#222222", align = align)
         end
     end
+
+    # 4-entry left-panel legend with category swatches.
+    legend_elems = [
+        MarkerElement(color = colorant"#2c3e50", marker = :circle, markersize = 9,
+                      strokecolor = :white, strokewidth = 0.6),
+        MarkerElement(color = colorant"#27ae60", marker = :utriangle, markersize = 12,
+                      strokecolor = :white, strokewidth = 0.9),
+        MarkerElement(color = colorant"#c0392b", marker = :circle, markersize = 10,
+                      strokecolor = :white, strokewidth = 0.9),
+        MarkerElement(color = RGBAf(0, 0, 0, 0), marker = :circle, markersize = 10,
+                      strokecolor = colorant"#7f8c8d", strokewidth = 1.0),
+    ]
+    legend_labels = ["paradox supported", "favorable reversal",
+                     "high decorrelation", "placebo / emergent"]
+    # Place the legend inside the left panel at lower-left, like the Python.
+    Legend(fig[1, 1], legend_elems, legend_labels;
+           labelsize = 8.5, tellwidth = false, tellheight = false,
+           halign = :left, valign = :bottom,
+           margin = (10, 10, 10, 10), framevisible = true)
+
     save(joinpath(outdir, "D2_decorrelation_suitewide.png"), fig; px_per_unit = 170 / 72)
 end
 
