@@ -11,10 +11,10 @@ using GlimpseABM
 
     GlimpseABM.record_confidence_outcome_observation!(
         agent, 0.80, 0.50; ai_used=true, channel="investment"
-    )
+   )
     GlimpseABM.record_confidence_outcome_observation!(
         agent, 0.20, 2.00; ai_used=false, channel="innovate"
-    )
+   )
 
     diag = agent.confidence_outcome_diagnostics
     @test diag.obs_count == 2

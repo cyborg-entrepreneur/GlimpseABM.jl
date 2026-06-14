@@ -1,9 +1,10 @@
 """
-Shared NaN-safe summary helpers for the analysis scripts.
+Shared NaN-safe summary helpers for mixed-tier analysis scripts.
 
-Guards against small-N / empty batches: `mean`/`std` on a 0-length vector
-return NaN, and `std` on a 1-length vector also returns NaN (sample variance
-needs n >= 2).
+v3.5.20: extracted from run_mixed_tier_analysis_full.jl so refutation,
+mechanism, placebo, and lambda-sweep drivers all benefit from the same
+small-N / empty-batch guards. mean/std on a 0-length vector returns NaN,
+and std on a 1-length vector also returns NaN (sample variance needs n>=2).
 """
 
 using Statistics

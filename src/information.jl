@@ -24,12 +24,40 @@ mutable struct InformationSystem
     cache_hits::Int
     cache_misses::Int
     domain_performance::Dict{String,Vector{Float64}}
+    # ── Emergence audit extension (P9, AI_ERROR_CORRELATION) ────────────────
+    # Per-(opportunity, round, tier) common error draws. Keyed (opp_id,
+    # ai_level); the round dimension is implicit because the cache is cleared
+    # with the information cache at the start of every round (clear_cache!,
+    # called from simulation step!). At rho = 0 (default) NOTHING is ever
+    # inserted here — the blend in get_information short-circuits before any
+    # common draw is consumed (bit-identity pin, test_emergence_audit.jl).
+    common_error_cache::Dict{Tuple{String,String},Float64}
+    # DEDICATED RNG stream for the common draws. Stream design: derived
+    # deterministically from the simulation seed at construction
+    # (MersenneTwister(seed ⊻ COMMON_ERROR_STREAM_SALT)) and consumed ONLY by
+    # common_estimate_error!, so enabling rho > 0 never desynchronizes
+    # market.rng or agent.rng draw sequences — the agent stream consumes
+    # exactly one randn for the estimate error at every rho (idiosyncratic at
+    # rho = 0, blend component at rho > 0), keeping all other draws aligned
+    # across rho conditions under paired seeds.
+    common_error_rng::Random.AbstractRNG
 end
+
+# Salt for deriving the dedicated common-error stream from the simulation
+# seed. Any fixed constant works (the stream only has to be independent of
+# the market/agent streams and reproducible from the seed); documented so
+# the derivation is auditable.
+const COMMON_ERROR_STREAM_SALT = UInt64(0x9E3779B97F4A7C15)
 
 """
 Create a new InformationSystem.
+
+`common_error_seed` seeds the dedicated common-error stream (emergence audit
+P9 dial); production passes the simulation's `actual_seed` so rho > 0 runs
+are reproducible per (seed, run). The default 0 only matters for diagnostic
+paths that never enable the dial.
 """
-function InformationSystem(config::EmergentConfig)
+function InformationSystem(config::EmergentConfig; common_error_seed::Integer=0)
     return InformationSystem(
         config,
         Dict{Tuple{String,String,Int},Information}(),
@@ -41,8 +69,25 @@ function InformationSystem(config::EmergentConfig)
             "technical_assessment" => Float64[],
             "uncertainty_evaluation" => Float64[],
             "innovation_potential" => Float64[]
-        )
+        ),
+        Dict{Tuple{String,String},Float64}(),
+        Random.MersenneTwister(UInt64(abs(common_error_seed)) ⊻ COMMON_ERROR_STREAM_SALT)
     )
+end
+
+"""
+One standard-normal common draw per (opportunity, round, tier), shared by
+every agent of that tier evaluating that opportunity that round (the round
+key is implicit: the cache is cleared per round). Drawn from the dedicated
+`common_error_rng` stream — see the field docs for the stream design.
+Only reachable when AI_ERROR_CORRELATION > 0 (the rho = 0 default
+short-circuits in get_information before calling this).
+"""
+function common_estimate_error!(sys::InformationSystem, opp_id::String,
+                                ai_level::String)::Float64
+    return get!(sys.common_error_cache, (opp_id, ai_level)) do
+        randn(sys.common_error_rng)
+    end
 end
 
 """
@@ -101,10 +146,6 @@ function generate_insights(
     domain::Union{String,Nothing}=nothing
 )::Vector{String}
     insights = String[]
-
-    if breadth > 0.2
-        push!(insights, "Market lifecycle: $(opp.lifecycle_stage)")
-    end
 
     if breadth > 0.4
         if opp.competition > 0.5
@@ -281,11 +322,47 @@ function get_information(
     hallucination_intensity = sys.config.HALLUCINATION_INTENSITY
     hallucination_rate = clamp(hallucination_rate * hallucination_intensity, 0.0, 1.0)
 
-    bias = Float64(domain_cap.bias)
+    # AI_BIAS_INTENSITY scales the systematic-bias channel the way
+    # HALLUCINATION_INTENSITY scales hallucinations in Step 4 above: 0.0 =
+    # bias-free (the NO_AI_BIAS robustness cell), 1.0 = baseline.
+    # Multiplication by exactly 1.0 is an identity in IEEE arithmetic, so the
+    # default path stays bit-identical.
+    bias = Float64(domain_cap.bias) *
+           max(0.0, Float64(getfield_default(sys.config, :AI_BIAS_INTENSITY, 1.0)))
     generalization_noise_multiplier = 1.0 + 0.35 * generalization_pressure
 
-    # Estimate return with noise (quality-scaled)
-    return_noise = randn(rng) * (1 - actual_accuracy) * 0.5 * generalization_noise_multiplier
+    # Estimate return with noise (quality-scaled).
+    #
+    # Emergence audit P9 (AI_ERROR_CORRELATION = rho): the CONTINUOUS estimate
+    # error is eps = sqrt(rho)*eps_common(opp, round, tier) + sqrt(1-rho)*eps_idio
+    # with eps_common, eps_idio independent standard normals, so
+    # Var(eps) = rho + (1 - rho) = 1 at every rho — total error variance (and
+    # therefore accuracy) is preserved by construction; the dial moves signal
+    # COMMONALITY at fixed signal QUALITY. Full algebra + scope at the
+    # AI_ERROR_CORRELATION definition (config.jl).
+    #
+    # BIT-IDENTITY at rho = 0 (default): the branch below short-circuits to
+    # the original single randn(rng) — no common draw is consumed and the
+    # agent-rng draw order is byte-identical to the pre-dial code. At rho > 0
+    # the agent rng STILL consumes exactly one randn (the idiosyncratic
+    # component, even at rho = 1 where its weight is 0), keeping all
+    # subsequent agent-rng draws aligned across rho conditions.
+    #
+    # SCOPE: only this return-estimate error is correlated; the hallucination
+    # flag, accuracy noise, uncertainty noise, and overconfidence draws below
+    # stay idiosyncratic, and the "none" tier (no AI instrument) is exempt —
+    # conservative choices documented at the config field.
+    rho = sys.config.AI_ERROR_CORRELATION
+    return_eps = if rho == 0.0 || ai_level == "none"
+        randn(rng)
+    else
+        (0.0 < rho <= 1.0) || error(
+            "Invalid AI_ERROR_CORRELATION=$(rho) at first use " *
+            "(get_information). Require 0 ≤ rho ≤ 1.")
+        sqrt(rho) * common_estimate_error!(sys, opp.id, ai_level) +
+            sqrt(1.0 - rho) * randn(rng)
+    end
+    return_noise = return_eps * (1 - actual_accuracy) * 0.5 * generalization_noise_multiplier
     estimated_return = opp.latent_return_potential + return_noise + bias * 0.3
     estimated_return = clamp(estimated_return,
         sys.config.OPPORTUNITY_RETURN_RANGE[1],
@@ -418,10 +495,16 @@ function get_human_information(
 end
 
 """
-Clear the information cache.
+Clear the per-round information caches: the per-agent information cache AND
+the per-(opportunity, tier) common-error cache (emergence audit P9 — the
+common cache MUST clear with the info cache so eps_common is per-(opp,
+round, tier), not per-(opp, tier) forever). Called at the start of every
+simulation round (step!, simulation.jl).
 """
 function clear_cache!(sys::InformationSystem)
     empty!(sys.information_cache)
+    empty!(sys.common_error_cache)
+    return nothing
 end
 
 """

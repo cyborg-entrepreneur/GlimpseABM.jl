@@ -19,7 +19,6 @@ using GlimpseABM
         discovery_round=nothing,
         config=cfg,
         competition=10.0,
-        lifecycle_stage="mature",
         sector="tech",
         capital_requirements=100_000.0,
         market_impact=25.0,
@@ -28,7 +27,7 @@ using GlimpseABM
         novelty_score=0.0,
         combination_uncertainty=0.0,
         required_discovery_threshold=0.0,
-    )
+   )
     push!(market.opportunities, data_rich)
     market.opportunity_map[data_rich.id] = data_rich
 
@@ -76,21 +75,19 @@ end
         discovered=false,
         sector="tech",
         competition=10.0,
-        lifecycle_stage="mature",
         market_impact=25.0,
         total_invested=10_000_000.0,
         capacity=1_000_000.0,
         novelty_score=0.0,
         combination_uncertainty=0.0,
         required_discovery_threshold=0.0,
-    )
+   )
     tacit_unknown = Opportunity(
         id="tacit_unknown_probe",
         complexity=2.0,
         discovered=false,
         sector="tech",
         competition=0.0,
-        lifecycle_stage="emerging",
         market_impact=0.0,
         total_invested=0.0,
         capacity=1_000_000.0,
@@ -98,7 +95,7 @@ end
         combination_uncertainty=1.0,
         required_discovery_threshold=1.0,
         truly_unknown=true,
-    )
+   )
 
     p_data_rich = GlimpseABM.opportunity_discovery_probability(market, agent, data_rich, "premium")
     p_tacit = GlimpseABM.opportunity_discovery_probability(market, agent, tacit_unknown, "premium")
@@ -120,7 +117,7 @@ end
         total_invested=0.0,
         market_impact=0.0,
         capacity=1_000_000.0,
-    )
+   )
     visible_trace = Opportunity(
         id="visible_trace",
         discovered=false,
@@ -129,8 +126,7 @@ end
         total_invested=5_000_000.0,
         market_impact=10.0,
         capacity=1_000_000.0,
-        lifecycle_stage="growing",
-    )
+   )
 
     @test GlimpseABM._public_diffusion_probability(no_trace, 0) == 0.0
     @test GlimpseABM._public_diffusion_probability(visible_trace, 10) > 0.20

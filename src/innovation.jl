@@ -162,6 +162,12 @@ function attempt_innovation!(
     ai_level::String="none",
     uncertainty_perception::Union{Perception,Nothing}=nothing,
     decision_perception::Union{Perception,Nothing}=nothing,
+    # A2 directed creation (open-action extension): the innovating agent's
+    # perceived sector density (its own visible-opportunity sector mix,
+    # competition-weighted), threaded from make_decision! only when
+    # ENABLE_DIRECTED_CREATION is on. `nothing` keeps sector selection on the
+    # reactive deterministic knowledge-domain mapping.
+    sector_density::Union{Dict{String,Float64},Nothing}=nothing,
     rng::AbstractRNG=Random.default_rng()
 )::Union{Innovation,Nothing}
     behavior_level = behavior_ai_level(engine.config, ai_level)
@@ -312,8 +318,13 @@ function attempt_innovation!(
         return nothing
     end
 
-    # Determine sector
-    innovation_sector = determine_innovation_sector(engine, agent, selected_knowledge)
+    # Determine sector (directed creation, when enabled, redirects this
+    # choice away from sectors the agent perceives as crowded; spawned
+    # opportunities inherit innovation.sector downstream, so this is the
+    # single chokepoint for both the combination's sector and any spawn).
+    innovation_sector = determine_innovation_sector(
+        engine, agent, selected_knowledge;
+        sector_density=sector_density, rng=rng)
 
     # Create innovation
     innovation = create_innovation(
@@ -516,11 +527,35 @@ end
 
 """
 Determine the sector for an innovation.
+
+Reactive default: deterministic knowledge-domain mapping (dominant domain of
+the selected components → sector). With ENABLE_DIRECTED_CREATION and a
+perceived `sector_density` from the innovating agent's seat (open-action
+extension A2, the design notes), the choice becomes a
+MIXTURE that nests the baseline (G3 fix, 2026-06-09): with probability
+`exp(−DIRECTED_CREATION_STRENGTH)` the knowledge-mapped sector is returned
+deterministically (the flag-off behavior); otherwise the sector is drawn from
+density-tilted weights
+`w_s ∝ prior_s × exp(−DIRECTED_CREATION_STRENGTH × density_z_s)`
+(directed_sector_weights, open_action.jl — a pure weights function, meaning
+unchanged): biased AWAY from sectors the agent perceives as crowded and
+TOWARD sparse ones, with the knowledge-mapped sector keeping a 2:1 anchor
+prior inside the tilted component. strength = 0 ⇒ anchor probability
+exp(0) = 1, exactly reproducing the flag-off sector DISTRIBUTION, so the dial
+interpolates cleanly from the baseline. Only the DIRECTION of creation
+changes — the innovation-attempt RATE upstream is untouched.
+
+RNG accounting: the disabled path consumes NO RNG (bit-identical default).
+The enabled path consumes one `rand` for the mixture branch, plus one more
+for the weighted draw when the tilted component is selected (the
+caller-supplied agent rng in both cases).
 """
 function determine_innovation_sector(
     engine::InnovationEngine,
     agent::Any,  # EmergentAgent - using Any to avoid circular dependency
-    selected_knowledge::Vector{Knowledge}
+    selected_knowledge::Vector{Knowledge};
+    sector_density::Union{Dict{String,Float64},Nothing}=nothing,
+    rng::Union{AbstractRNG,Nothing}=nothing
 )::String
     # Use knowledge base domain-to-sector mapping
     domain_to_sector = engine.knowledge_base.domain_to_sector
@@ -538,7 +573,43 @@ function determine_innovation_sector(
     available_sectors = collect(engine.config.SECTORS)
     default_sector = isempty(available_sectors) ? "tech" : available_sectors[1]
 
-    return get(domain_to_sector, dominant_domain, default_sector)
+    knowledge_sector = get(domain_to_sector, dominant_domain, default_sector)
+
+    # A2 directed creation: Hayekian redirection of the sector choice.
+    if getfield_default(engine.config, :ENABLE_DIRECTED_CREATION, false) &&
+       !isnothing(sector_density) && !isnothing(rng) &&
+       !isempty(available_sectors)
+        validate_open_action_config(engine.config)
+        strength = Float64(engine.config.DIRECTED_CREATION_STRENGTH)
+        # G3 mixture branch: P(keep the knowledge-mapped anchor) =
+        # exp(−strength). strength = 0 ⇒ always the anchor (flag-off
+        # distribution, dial nests the baseline); rising strength shifts
+        # probability mass onto the density-tilted draw below. One rand here;
+        # a second only when the tilted component fires (see docstring).
+        if rand(rng) < exp(-strength)
+            return knowledge_sector
+        end
+        weights = directed_sector_weights(
+            available_sectors,
+            sector_density,
+            knowledge_sector,
+            strength,
+        )
+        total = sum(weights)
+        if total > 0.0
+            r = rand(rng) * total
+            acc = 0.0
+            for (i, w) in enumerate(weights)
+                acc += w
+                if r <= acc
+                    return available_sectors[i]
+                end
+            end
+            return available_sectors[end]
+        end
+    end
+
+    return knowledge_sector
 end
 
 """

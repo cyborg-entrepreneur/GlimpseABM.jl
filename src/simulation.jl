@@ -172,8 +172,13 @@ function EmergentSimulation(;
                                                       knowledge_base=knowledge_base,
                                                       rng=rng)
 
-    # Create information system for AI-assisted analysis
-    info_system = InformationSystem(config)
+    # Create information system for AI-assisted analysis. common_error_seed
+    # seeds the DEDICATED common-error RNG stream (emergence audit P9,
+    # AI_ERROR_CORRELATION): derived from the run's actual_seed so rho > 0
+    # cells are reproducible per (seed, run), and consumed ONLY when rho > 0
+    # — the rho = 0 default never touches it (bit-identity pin,
+    # test_emergence_audit.jl).
+    info_system = InformationSystem(config; common_error_seed=actual_seed)
 
     # Determine initial AI tier distribution
     # Default: 100% none. Can specify e.g. Dict("none"=>0.25, "basic"=>0.25, "advanced"=>0.25, "premium"=>0.25)
@@ -330,15 +335,7 @@ function _apply_matured_ai_learning!(
         "ai_level",
         get(matured_outcome, "ai_label", "none"),
     ))
-    if !counts_as_ai_use(sim.config, ai_tier)
-        return (
-            applied=false,
-            was_accurate=nothing,
-            suspected_ai_failure=false,
-            disconfirmation_score=0.0,
-            hidden_hallucination=Bool(get(matured_outcome, "ai_contains_hallucination", false)),
-        )
-    end
+    ai_assisted = counts_as_ai_use(sim.config, ai_tier)
 
     domain = String(get(matured_outcome, "ai_analysis_domain", "market_analysis"))
     inv_amount = Float64(get(
@@ -352,23 +349,71 @@ function _apply_matured_ai_learning!(
         "capital_returned",
         inv_amount * Float64(get(matured_outcome, "return_multiple", 1.0)),
     ))
-    pred_return = Float64(get(matured_outcome, "estimated_return", 1.0))
+    # invariant (raw/decision split, design note 2026-06-09): the
+    # decision-time PREDICTION scored here is the RAW instrument estimate —
+    # what the InformationSystem actually said ("instrument_estimated_return")
+    # — never the decision-basis "estimated_return", which S1 strategy
+    # shading may have transformed (judging the instrument against its own
+    # shaded transform manufactures forecast error the instrument never
+    # made). The prediction is symmetric across populations: the
+    # InformationSystem produces estimated_return (and a confidence) for tier
+    # "none" too, so no-AI agents are scored against THEIR OWN forecast
+    # exactly as AI users are scored against the AI-informed one. Legacy
+    # records without the raw key fall back to "estimated_return" (identical
+    # unless S1 was active); records with NO estimate at all are EXCLUDED
+    # from exposure recording (pred_return === nothing → the shared scorer
+    # returns nothing) — never scored against the realized multiple.
+    has_estimate = Bool(get(matured_outcome, "has_return_estimate", true))
+    pred_return = has_estimate ? _stored_instrument_estimate(matured_outcome) : nothing
     conf = Float64(get(matured_outcome, "ai_confidence", 0.5))
     success = Bool(get(matured_outcome, "success", false))
 
-    recent_scores = get(agent.ai_learning.accuracy_estimates, domain, Float64[])
-    recent_accuracy = isempty(recent_scores) ? 0.5 :
-        mean(recent_scores[max(1, length(recent_scores) - 4):end])
-    analytical = Float64(get(agent.traits, "analytical_ability", 0.5))
-    disconfirmation = observable_ai_disconfirmation(
+    # Market-level uncertainty observes realized forecast disconfirmation, not
+    # the hidden hallucination flag. EVERY matured outcome (with a stored
+    # estimate) is recorded as an exposure — AI-assisted or not — so the
+    # rolling stats carry a human baseline alongside the AI population.
+    # Pareto-tailed venture returns make large forecast errors ubiquitous for
+    # everyone; recording only AI outcomes turned this channel into a
+    # hard-wired AI-presence offset. AI-specific
+    # consumers read only the EXCESS of the AI rate over the baseline.
+    # Scoring + recording are shared with the pivot path
+    # (_score_and_record_forecast_disconfirmation!, agents.jl — F2b).
+    disconfirmation = _score_and_record_forecast_disconfirmation!(
+        sim.uncertainty_env, agent, sim.current_round;
+        ai_tier=ai_tier,
+        domain=domain,
         investment_amount=inv_amount,
         capital_returned=cap_returned,
         predicted_return=pred_return,
         ai_confidence=conf,
         success=success,
-        recent_accuracy=recent_accuracy,
-        analytical_ability=analytical,
     )
+    if isnothing(disconfirmation)
+        # No estimate was ever stored for this investment: excluded from
+        # disconfirmation exposure recording AND from AI-trust learning
+        # (there is no forecast to attribute accuracy or failure to).
+        return (
+            applied=false,
+            was_accurate=nothing,
+            suspected_ai_failure=false,
+            disconfirmation_score=0.0,
+            hidden_hallucination=Bool(get(matured_outcome, "ai_contains_hallucination", false)),
+        )
+    end
+
+    if !ai_assisted
+        # No-AI outcomes contribute to the population-level baseline above but
+        # do not drive AI-trust learning or hallucination-penalty mechanics —
+        # there is no AI to attribute the miss to. Return shape matches the
+        # historical no-AI contract.
+        return (
+            applied=false,
+            was_accurate=nothing,
+            suspected_ai_failure=false,
+            disconfirmation_score=0.0,
+            hidden_hallucination=Bool(get(matured_outcome, "ai_contains_hallucination", false)),
+        )
+    end
 
     was_accurate = update_agent_learning!(
         agent.ai_learning,
@@ -382,25 +427,6 @@ function _apply_matured_ai_learning!(
     )
 
     update_domain_belief!(sim.knowledge_base, agent.id, domain, disconfirmation.accuracy_score)
-
-    # Market-level uncertainty observes realized disconfirmation, not the hidden
-    # hallucination flag. This records every matured AI-assisted outcome as an
-    # exposure and marks suspected failures from forecast error / confidence /
-    # return evidence.
-    record_observable_ai_disconfirmation!(
-        sim.uncertainty_env,
-        sim.current_round,
-        agent.id,
-        behavior_ai_level(sim.config, ai_tier),
-        domain;
-        suspected_ai_failure=disconfirmation.suspected_ai_failure,
-        disconfirmation_score=disconfirmation.disconfirmation_score,
-        severity=disconfirmation.severity,
-        return_error=disconfirmation.return_error,
-        ai_confidence=conf,
-        accuracy_score=disconfirmation.accuracy_score,
-        success=success,
-    )
 
     # Hidden hallucination truth remains telemetry only. Knowledge/trust damage
     # follows observable disconfirmation: forecast error, confidence, realized
@@ -437,12 +463,14 @@ function step!(sim::EmergentSimulation, round::Int)
     # (rather than the stale value from the prior step).
     sim.market.current_round = round
 
-    # Invalidate the InformationSystem cache at the start of each round.
-    # The cache key is (opp.id, ai_level, agent_id) but opportunity state
-    # (competition, lifecycle_stage, disrupted_count) evolves across rounds,
+    # Invalidate the InformationSystem caches at the start of each round.
+    # The info-cache key is (opp.id, ai_level, agent_id) but opportunity state
+    # (competition, total_invested, market_impact) evolves across rounds,
     # so stale estimates from round N-1 leak into round N decisions. Clearing
-    # here forces a fresh Information draw per round per agent.
-    empty!(sim.info_system.information_cache)
+    # here forces a fresh Information draw per round per agent. clear_cache!
+    # also clears the common-error cache (emergence audit P9), making the
+    # shared draw per-(opportunity, ROUND, tier) — the round key is this clear.
+    clear_cache!(sim.info_system)
 
     # Get current uncertainty state and market conditions. MarketConditions is
     # an immutable typed struct, so uncertainty_state is injected at construction.
@@ -508,14 +536,23 @@ function step!(sim::EmergentSimulation, round::Int)
             ai_tier = get(m, "ai_level", get_ai_level(agent))
             return_mult = Float64(get(m, "return_multiple", get(m, "success", false) ? 1.5 : 0.5))
             update_tier_belief!(agent.ai_learning, ai_tier, return_mult)
-            # Drive AI-trust and experience-based trait evolution. An outcome is
-            # "AI-accurate" when the estimated_return at investment was within
-            # 25% of the realized return_multiple.
+            # Drive AI-trust and experience-based trait evolution. An outcome
+            # is "AI-accurate" when the RAW instrument estimate at investment
+            # (F1: instrument_estimated_return — what the AI actually said,
+            # not the possibly-S1-shaded decision basis) was within 25% of
+            # the realized return_multiple. Legacy records fall back to
+            # "estimated_return"; records with no estimate at all are not
+            # scored as accurate (ai_was_accurate=nothing).
             if counts_as_ai_use(sim.config, String(ai_tier))
-                est = Float64(get(m, "estimated_return", 1.0))
-                actual = Float64(get(m, "return_multiple", 1.0))
-                ai_accurate = est > 0 && abs(actual - est) / max(abs(est), 0.1) < 0.25
-                update_state_from_outcome!(agent, m; ai_was_accurate=ai_accurate)
+                est = Bool(get(m, "has_return_estimate", true)) ?
+                    _stored_instrument_estimate(m) : nothing
+                if isnothing(est)
+                    update_state_from_outcome!(agent, m; ai_was_accurate=nothing)
+                else
+                    actual = Float64(get(m, "return_multiple", 1.0))
+                    ai_accurate = est > 0 && abs(actual - est) / max(abs(est), 0.1) < 0.25
+                    update_state_from_outcome!(agent, m; ai_was_accurate=ai_accurate)
+                end
             else
                 update_state_from_outcome!(agent, m; ai_was_accurate=nothing)
             end
@@ -587,11 +624,15 @@ function step!(sim::EmergentSimulation, round::Int)
         early_signals = Dict{String,Int}()  # Track which opportunities early agents invested in
 
         for agent in early_agents
+            # USE_NETWORK_EFFECTS=false leaves the neighbor list empty, which
+            # downstream (collect_neighbor_signals) treats as "no peers visible".
             neighbor_agents = EmergentAgent[]
-            other_agents = filter(a -> a.id != agent.id && a.alive, alive_agents)
-            if !isempty(other_agents)
-                n_neighbors = min(5, length(other_agents))
-                neighbor_agents = rand(sim.rng, other_agents, n_neighbors)
+            if sim.config.USE_NETWORK_EFFECTS
+                other_agents = filter(a -> a.id != agent.id && a.alive, alive_agents)
+                if !isempty(other_agents)
+                    n_neighbors = min(Int(sim.config.NETWORK_N_NEIGHBORS), length(other_agents))
+                    neighbor_agents = rand(sim.rng, other_agents, n_neighbors)
+                end
             end
 
             # Per-agent opportunity filter: use the AI-tier-aware visibility
@@ -627,11 +668,14 @@ function step!(sim::EmergentSimulation, round::Int)
 
         # Phase 3b: Late agents decide with visible signals
         for agent in late_agents
+            # USE_NETWORK_EFFECTS=false leaves the neighbor list empty (no peers visible).
             neighbor_agents = EmergentAgent[]
-            other_agents = filter(a -> a.id != agent.id && a.alive, alive_agents)
-            if !isempty(other_agents)
-                n_neighbors = min(5, length(other_agents))
-                neighbor_agents = rand(sim.rng, other_agents, n_neighbors)
+            if sim.config.USE_NETWORK_EFFECTS
+                other_agents = filter(a -> a.id != agent.id && a.alive, alive_agents)
+                if !isempty(other_agents)
+                    n_neighbors = min(Int(sim.config.NETWORK_N_NEIGHBORS), length(other_agents))
+                    neighbor_agents = rand(sim.rng, other_agents, n_neighbors)
+                end
             end
 
             # Per-agent opportunity filter: tier-aware visibility.
@@ -663,12 +707,13 @@ function step!(sim::EmergentSimulation, round::Int)
                 continue
             end
 
-            # Collect neighbor agents for social influence
+            # Collect neighbor agents for social influence.
+            # USE_NETWORK_EFFECTS=false leaves the neighbor list empty (no peers visible).
             neighbor_agents = EmergentAgent[]
-            if length(alive_agents) > 1
+            if sim.config.USE_NETWORK_EFFECTS && length(alive_agents) > 1
                 other_agents = filter(a -> a.id != agent.id && a.alive, alive_agents)
                 if !isempty(other_agents)
-                    n_neighbors = min(5, length(other_agents))
+                    n_neighbors = min(Int(sim.config.NETWORK_N_NEIGHBORS), length(other_agents))
                     neighbor_agents = rand(sim.rng, other_agents, n_neighbors)
                 end
             end
@@ -696,11 +741,14 @@ function step!(sim::EmergentSimulation, round::Int)
         end
     end
 
-    # Update tier beliefs from immediate action outcomes (innovate, explore).
-    # Use cash_multiple (innovate) when available; otherwise convert Boolean
-    # success to a 1.5/0.5 multiplier estimate. Feeding the magnitude (not just
-    # the Boolean) lets emergent-mode tier choice distinguish a 5× innovation
-    # from a barely-positive 1.05× one.
+    # Update tier beliefs from immediate INNOVATE outcomes only, using the
+    # realized cash multiple (cash_multiple, or returned/rd_spend on the
+    # legacy fallback path). Explore is deliberately excluded: discovery is a
+    # tier-independent draw (DISCOVERY_PROBABILITY) whose Boolean success
+    # carries no information about tier effectiveness — converting it to a
+    # 1.5/0.5 pseudo-multiple injected Bernoulli(p) noise with negative
+    # expected evidence into whichever tier the explorer happened to hold,
+    # distorting emergent-mode adoption and confidence-calibration telemetry.
     for action in agent_actions
         agent_id = get(action, "agent_id", 0)
         if agent_id < 1 || agent_id > length(sim.agents)
@@ -711,12 +759,16 @@ function step!(sim::EmergentSimulation, round::Int)
             continue
         end
         action_type = get(action, "action", "maintain")
-        if action_type in ["innovate", "explore"]
+        if action_type == "innovate"
             ai_tier = action_behavior_ai_level(action)
             return_mult = if haskey(action, "cash_multiple")
                 Float64(action["cash_multiple"])
             else
-                get(action, "success", false) ? 1.5 : 0.5
+                rd_spend = Float64(get(action, "rd_spend", 0.0))
+                returned = Float64(get(action, "innovation_return",
+                                       get(action, "recovery", 0.0)))
+                rd_spend > 0 ? returned / rd_spend :
+                    (get(action, "success", false) ? 1.5 : 0.5)
             end
             update_tier_belief!(agent.ai_learning, ai_tier, return_mult)
 
@@ -727,6 +779,10 @@ function step!(sim::EmergentSimulation, round::Int)
             record_confidence_outcome_observation!(agent, decision_conf, return_mult;
                                                    ai_used=counts_as_ai_use(sim.config, String(ai_tier)),
                                                    channel=action_type)
+            update_state_from_outcome!(agent, action; ai_was_accurate=nothing)
+        elseif action_type == "explore"
+            # Trait/experience evolution still applies; only the tier-belief
+            # and pseudo-multiple confidence channels are gated off.
             update_state_from_outcome!(agent, action; ai_was_accurate=nothing)
         end
     end
@@ -756,7 +812,7 @@ function step!(sim::EmergentSimulation, round::Int)
     # Build Innovation objects from the real innovation-outcome fields stored
     # by attempt_innovation! on the action dict. Fabricating innovations with
     # random novelty/quality here would discard the agent's actual outcome, so
-    # all downstream effects (opportunity spawning, novelty disruption) would
+    # all downstream effects (opportunity spawning) would
     # see random values regardless of which tier created them.
     innovations = Innovation[]
     for action in agent_actions
@@ -821,26 +877,6 @@ function step!(sim::EmergentSimulation, round::Int)
         end
     end
 
-    # Phase 5b: Apply novelty disruption for high-novelty innovations — novel
-    # innovations disrupt crowded opportunities in the same sector.
-    novelty_disruption_enabled = hasfield(typeof(sim.config), :NOVELTY_DISRUPTION_ENABLED) ?
-        sim.config.NOVELTY_DISRUPTION_ENABLED : true
-    if novelty_disruption_enabled
-        for innov in innovations
-            disrupted_count = apply_novelty_disruption!(sim.market, innov)
-            if disrupted_count > 0
-                # Track disruption in action for the innovator (optional: for analysis)
-                for action in agent_actions
-                    if get(action, "agent_id", 0) == innov.creator_id &&
-                       get(action, "action", "") == "innovate"
-                        action["disrupted_opportunities"] = disrupted_count
-                        break
-                    end
-                end
-            end
-        end
-    end
-
     # Create niche opportunities from exploration discoveries.
     for action in agent_actions
         if get(action, "action", "") == "explore" && get(action, "exploration_type", "") == "niche_discovery"
@@ -888,6 +924,10 @@ function step!(sim::EmergentSimulation, round::Int)
     manage_opportunities!(sim.market, round, opportunity_demand, total_investment)
 
     # Phase 6: Update uncertainty measurements
+    # Keep the environment's alive-population count current so the recursion
+    # dimension's population scaling actually engages as agents die (the field
+    # was previously set once at construction and never updated).
+    sim.uncertainty_env._last_alive_agents = count(a -> a.alive, sim.agents)
     record_ai_signals!(sim.uncertainty_env, round, agent_actions)
     uncertainty_state = measure_uncertainty_state!(
         sim.uncertainty_env,
@@ -902,6 +942,35 @@ function step!(sim::EmergentSimulation, round::Int)
     push!(sim.history, round_stats)
 
     return round_stats
+end
+
+"""
+Observation-weighted aggregate of per-tier emergent uncertainty metrics into a
+single population-level dict. Tiers with zero observations contribute nothing;
+with a single populated tier (fixed-tier runs) this reduces to that tier's
+values exactly.
+"""
+function _population_emergent_aggregate(by_tier::Dict)::Dict{String,Float64}
+    defaults = Dict{String,Float64}(
+        "actor_ignorance" => 0.5,
+        "practical_indeterminism" => 0.5,
+        "agentic_novelty" => 0.5,
+        "competitive_recursion" => 0.0,
+    )
+    out = Dict{String,Float64}()
+    for (dim, default) in defaults
+        weighted_sum = 0.0
+        total_obs = 0.0
+        for stats in values(by_tier)
+            obs = Float64(get(stats, "$(dim)_observations", 0.0))
+            obs > 0.0 || continue
+            weighted_sum += obs * Float64(get(stats, dim, default))
+            total_obs += obs
+        end
+        out[dim] = total_obs > 0.0 ? weighted_sum / total_obs : default
+        out["$(dim)_observations"] = total_obs
+    end
+    return out
 end
 
 """
@@ -949,6 +1018,12 @@ function compile_round_stats(
     utility_floor_hits = 0
     utility_ceiling_hits = 0
     utility_value_count = 0
+    # A1 open-action pivot telemetry (the design notes
+    # §Open-action extension): per-decision counts attached by make_decision!
+    # only when ENABLE_PIVOT is on (defaults below keep disabled runs at 0).
+    pivot_count_total = 0
+    pivot_recovered_total = 0.0
+    pivot_committed_total = 0.0
     roi_clamp_hits = 0
     experience_stats_count = 0
     raw_mean_roi_values = Float64[]
@@ -1015,6 +1090,10 @@ function compile_round_stats(
                 push!(action_probability_entropies, entropy)
             end
         end
+
+        pivot_count_total += Int(get(action, "pivot_count", 0))
+        pivot_recovered_total += Float64(get(action, "pivot_recovered", 0.0))
+        pivot_committed_total += Float64(get(action, "pivot_committed", 0.0))
 
         utils = get(action, "utilities", nothing)
         if utils isa Dict
@@ -1109,7 +1188,7 @@ function compile_round_stats(
             end
         elseif act_type == "explore"
             # Actions emit the spent amount under "explore_cost".
-            cost = Float64(get(action, "explore_cost", get(action, "cost", 0.0)))
+            cost = Float64(get(action, "explore_cost", 0.0))
             capital_deployed["explore"] += cost
             # Exploration doesn't have direct capital return
         end
@@ -1120,6 +1199,14 @@ function compile_round_stats(
         ret = Float64(get(outcome, "capital_returned", 0.0))
         capital_returned["invest"] += ret
     end
+
+    # ledger (design note): pivot recoveries are realized
+    # invest-channel returns (a pivot resolves an investment at the haircut
+    # value), so they enter capital_returned["invest"] alongside maturity
+    # payouts — otherwise mean_roic_invest / net_capital_flow_invest leak the
+    # recovered capital. The pivot_* telemetry columns below still report the
+    # pivot channel separately.
+    capital_returned["invest"] += pivot_recovered_total
 
     # ROIC by action type. NB this is a *round-level* PnL ratio: the numerator
     # is THIS round's matured returns (from investments deployed several rounds
@@ -1153,8 +1240,13 @@ function compile_round_stats(
         overall_hhi = sum((count / total_invests)^2 for count in values(opp_counts))
     end
 
+    # Empty per-tier cells (no agents of that tier this round) are NaN, not
+    # 0.0: an HHI/mean of zero observations is undefined, and a 0.0 sentinel
+    # silently deflates per-run means. Suite/analysis consumers aggregate these
+    # columns through finite-value filters (e.g. finite_mean), so NaN cells
+    # drop out instead of biasing toward zero.
     function exposure_hhi(ids::Vector{String})::Float64
-        isempty(ids) && return 0.0
+        isempty(ids) && return NaN
         counts = Dict{String,Int}()
         for id in ids
             counts[id] = get(counts, id, 0) + 1
@@ -1175,18 +1267,19 @@ function compile_round_stats(
     visible_hhi_basic = exposure_hhi(visible_exposures_by_tier["basic"])
     visible_hhi_advanced = exposure_hhi(visible_exposures_by_tier["advanced"])
     visible_hhi_premium = exposure_hhi(visible_exposures_by_tier["premium"])
+    # NaN (not 0.0) for empty per-tier cells — see exposure_hhi comment above.
     mean_visible_by_tier = Dict(
-        tier => isempty(vals) ? 0.0 : mean(vals)
+        tier => isempty(vals) ? NaN : mean(vals)
         for (tier, vals) in visible_opportunity_counts_by_tier
     )
     mean_info_quality_by_tier = Dict(
-        tier => isempty(vals) ? 0.0 : mean(vals)
+        tier => isempty(vals) ? NaN : mean(vals)
         for (tier, vals) in info_quality_values_by_tier
     )
     mean_perception_telemetry_by_tier = Dict{String,Dict{String,Float64}}()
     for (tier, telemetry) in perception_telemetry_by_tier
         mean_perception_telemetry_by_tier[tier] = Dict(
-            key => isempty(vals) ? 0.0 : mean(vals)
+            key => isempty(vals) ? NaN : mean(vals)
             for (key, vals) in telemetry
         )
     end
@@ -1254,27 +1347,14 @@ function compile_round_stats(
         include_dead=false,
     )
 
-    # Get simulation's AI tier (all agents have same fixed tier in this simulation design)
-    # Use fixed_ai_level if set, otherwise current_ai_level
-    sim_tier = if !isempty(sim.agents)
-        first_agent = sim.agents[1]
-        if !isnothing(first_agent.fixed_ai_level)
-            first_agent.fixed_ai_level
-        else
-            first_agent.current_ai_level
-        end
-    else
-        "none"
-    end
-
-    # Get emergent metrics for this tier
-    tier_emergent = get(all_emergent_by_tier, sim_tier, Dict{String,Float64}(
-        "actor_ignorance" => 0.5,
-        "practical_indeterminism" => 0.5,
-        "agentic_novelty" => 0.5,
-        "competitive_recursion" => 0.0
-    ))
-    tier_survivor_emergent = get(survivor_emergent_by_tier, sim_tier, tier_emergent)
+    # Observation-weighted population aggregate across tiers. In fixed
+    # single-tier runs only one tier has observations, so this equals the old
+    # per-tier values exactly; in emergent/mixed-distribution runs it yields an
+    # honest population-level series instead of silently tracking whichever
+    # tier agent #1 happened to hold that round. Per-tier emergent metrics for
+    # mixed runs are recomputed by the analysis scripts directly from agents.
+    tier_emergent = _population_emergent_aggregate(all_emergent_by_tier)
+    tier_survivor_emergent = _population_emergent_aggregate(survivor_emergent_by_tier)
 
     emergent_actor_ignorance = Float64(get(tier_emergent, "actor_ignorance", 0.5))
     emergent_practical_indet = Float64(get(tier_emergent, "practical_indeterminism", 0.5))
@@ -1430,6 +1510,17 @@ function compile_round_stats(
         "innovation_attempts" => innovation_attempts,
         "innovation_successes" => innovation_successes,
         "innovation_success_rate" => innovation_success_rate,
+        # A1 open-action pivot telemetry. Counts/sums are 0 when no pivots
+        # occurred (a count of zero events is data); the recovery RATE over
+        # zero pivots is undefined and emitted as NaN per the NaN-for-empty
+        # convention (2026-06-09 scripts fixes) — suite consumers aggregate
+        # through finite-value filters, so empty cells drop out instead of
+        # deflating toward zero.
+        "pivot_count" => pivot_count_total,
+        "pivot_capital_recovered" => pivot_recovered_total,
+        "pivot_capital_committed" => pivot_committed_total,
+        "pivot_recovery_rate" => pivot_committed_total > 0.0 ?
+            pivot_recovered_total / pivot_committed_total : NaN,
         # Confidence metrics
         "mean_confidence_invest" => mean_confidence_invest,
         "mean_ai_trust" => mean_trust,
@@ -1511,8 +1602,15 @@ function history_to_dataframe(sim::EmergentSimulation)::DataFrame
         return DataFrame()
     end
 
-    # Get all column names from first entry
-    cols = collect(keys(sim.history[1]))
+    # Union of column names across ALL rounds (sorted for stable column
+    # order). Taking only round 1's keys silently dropped any telemetry key
+    # that first appears later, e.g. per-tier perception components for tiers
+    # with no agents in round 1.
+    col_set = Set{String}()
+    for h in sim.history
+        union!(col_set, keys(h))
+    end
+    cols = sort!(collect(col_set))
 
     # Create DataFrame
     df = DataFrame()

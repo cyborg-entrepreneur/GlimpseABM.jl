@@ -4,6 +4,8 @@ Core dataclasses used across the Glimpse ABM simulation.
 This module defines the fundamental data structures that represent the
 entities and interactions in the agent-based model of entrepreneurship
 under Knightian uncertainty with AI augmentation.
+
+Port of: glimpse_abm/models.py
 """
 
 using Random
@@ -77,7 +79,6 @@ mutable struct Opportunity
     discovery_round::Union{Int,Nothing}
     config::Union{EmergentConfig,Nothing}
     competition::Float64
-    lifecycle_stage::String
     path_dependency::Float64
     sector::Union{String,Nothing}
     capital_requirements::Float64
@@ -100,7 +101,6 @@ mutable struct Opportunity
     novelty_score::Float64              # 0.0 = established, 1.0 = very novel
     total_invested::Float64             # Track total investment for capacity constraints
     capacity::Float64                   # Max investment capacity
-    disrupted_count::Int                # How many times disrupted by innovations
 end
 
 function Opportunity(;
@@ -113,7 +113,6 @@ function Opportunity(;
     discovery_round::Union{Int,Nothing} = nothing,
     config::Union{EmergentConfig,Nothing} = nothing,
     competition::Float64 = 0.0,
-    lifecycle_stage::String = "emerging",
     path_dependency::Float64 = 0.0,
     sector::Union{String,Nothing} = nothing,
     capital_requirements::Float64 = 10000.0,
@@ -136,7 +135,6 @@ function Opportunity(;
     novelty_score::Float64 = 0.0,       # 0.0 = established, 1.0 = very novel
     total_invested::Float64 = 0.0,      # Track total investment
     capacity::Float64 = 0.0,            # 0 = sentinel: sample from config
-    disrupted_count::Int = 0,           # Disruption counter
     # Seedable RNG for reproducible capacity sampling. Default falls back to
     # global rand() for backwards compatibility with ad-hoc Opportunity
     # construction, but production paths (market._create_realistic_opportunity,
@@ -147,13 +145,13 @@ function Opportunity(;
     opp = Opportunity(
         id, latent_return_potential, latent_failure_potential, complexity,
         discovered, created_by, discovery_round, config, competition,
-        lifecycle_stage, path_dependency, sector, capital_requirements,
+        path_dependency, sector, capital_requirements,
         capital_history, realized_returns, time_to_maturity, market_share,
         entry_barriers, age, base_failure_potential, truly_unknown,
         required_discovery_threshold, combination_uncertainty,
         combination_signature, market_impact, origin_innovation_id,
         crowding_penalty, component_scarcity,
-        novelty_score, total_invested, capacity, disrupted_count
+        novelty_score, total_invested, capacity
     )
 
     # Initialize base_failure_potential if not set
@@ -200,14 +198,13 @@ function realized_return(
     regime_failure = Float64(market_conditions.regime_failure_multiplier)
     risk_signal = clamp(risk_signal * regime_failure, 0.05, 0.95)
 
-    # Lifecycle multipliers
-    lifecycle_multipliers = Dict(
-        "emerging" => 1.12,
-        "growing" => 1.03,
-        "mature" => 0.9,
-        "declining" => 0.65,
-    )
-    lifecycle_factor = get(lifecycle_multipliers, opp.lifecycle_stage, 1.0)
+    # Constant demand-side factor; the staged lifecycle it once keyed off was
+    # excised 2026-06-09 as unreachable (review decision #4) — every opportunity
+    # stayed "emerging" (stage transitions required adoption_rate > 0.2 of ALL
+    # agents on one opportunity in one round; realistic values ~0.005), so this
+    # factor always evaluated to the "emerging" multiplier 1.12. Re-derive from
+    # a reachable adoption metric if lifecycle dynamics are ever needed.
+    lifecycle_factor = 1.12
     resilience = clamp(0.75 + 0.25 * (1.0 - risk_signal), 0.55, 1.45)
 
     # Sector clearing dynamics. sector_demand_adjustments (from
@@ -341,7 +338,7 @@ function realized_return(
         crowding_metrics = market_conditions.crowding_metrics
         crowding_index = Float64(get(crowding_metrics, "crowding_index", 0.25))
 
-        crowd_threshold = isnothing(config) ? 0.35 : config.RETURN_DEMAND_CROWDING_THRESHOLD
+        crowd_threshold = isnothing(config) ? 0.42 : config.RETURN_DEMAND_CROWDING_THRESHOLD
         if crowding_index > crowd_threshold
             crowd_penalty_extra = clamp(1.0 - 0.25 * (crowding_index - crowd_threshold), 0.5, 1.0)
             base_mean *= crowd_penalty_extra
@@ -383,7 +380,7 @@ function realized_return(
     regime = market_conditions.regime
 
     # Power law shape parameter - lower = heavier tails
-    alpha = isnothing(config) ? 2.5 : config.POWER_LAW_SHAPE_A
+    alpha = isnothing(config) ? 2.2 : config.POWER_LAW_SHAPE_A
 
     # Adjust alpha based on regime (more extreme outcomes in volatile regimes)
     regime_alpha_adjust = Dict(
@@ -441,7 +438,7 @@ function realized_return(
         Float64(market_conditions.aggregate_clearing_ratio)
     end
     hot_market_pressure = clamp(raw_ratio - 1.0, 0.0, 2.0)
-    downside_weight = isnothing(config) ? 0.65 : config.DOWNSIDE_OVERSUPPLY_WEIGHT
+    downside_weight = isnothing(config) ? 0.30 : config.DOWNSIDE_OVERSUPPLY_WEIGHT
     downside = clamp(0.2 + risk_signal * 0.4 + downside_weight * hot_market_pressure, 0.0, 2.0)
 
     # Beta shock for additional variance
@@ -450,8 +447,13 @@ function realized_return(
 
     # Idiosyncratic execution/market noise. This preserves the structural mean
     # but lets otherwise similar opportunities realize different outcomes.
-    return_noise_scale = !isnothing(config) && hasfield(typeof(config), :RETURN_NOISE_SCALE) ?
-        max(0.0, Float64(config.RETURN_NOISE_SCALE)) : 0.0
+    # Provenance + design properties documented at the RETURN_NOISE_SCALE
+    # definition in config.jl. No hasfield fallback: EmergentConfig statically
+    # owns the field, and a frozen fallback literal is exactly the silent-drift
+    # pattern the 2026-06 reviews caught twice elsewhere. config === nothing is
+    # the config-less diagnostic/test path only, which runs noise-free by design.
+    return_noise_scale = isnothing(config) ? 0.0 :
+        max(0.0, Float64(config.RETURN_NOISE_SCALE))
     if return_noise_scale > 0.0
         log_noise = return_noise_scale * randn(rng)
         scaled_return *= exp(log_noise - 0.5 * return_noise_scale^2)
@@ -469,19 +471,6 @@ function realized_return(
     lower_bound = isnothing(config) ? 0.0 : clamp(config.RETURN_LOWER_BOUND, 0.0, 1.0)
 
     return clamp(scaled_return, lower_bound, upper_bound)
-end
-
-"""
-Update opportunity lifecycle based on adoption rate.
-"""
-function update_lifecycle!(opp::Opportunity, adoption_rate::Float64)
-    if opp.lifecycle_stage == "emerging" && adoption_rate > 0.2
-        opp.lifecycle_stage = "growing"
-    elseif opp.lifecycle_stage == "growing" && adoption_rate > 0.6
-        opp.lifecycle_stage = "mature"
-    elseif opp.lifecycle_stage == "mature" && adoption_rate > 0.8
-        opp.lifecycle_stage = "declining"
-    end
 end
 
 # ============================================================================
@@ -725,7 +714,7 @@ end
 """
 Update Bayesian beliefs about AI tier effectiveness based on realized return multiplier.
 
-Uses continuous evidence derived from the return multiplier.
+Uses continuous evidence derived from the return multiplier (matches Python implementation).
 Higher returns provide stronger positive evidence, lower returns provide negative evidence.
 The evidence is computed as: stable_sigmoid((multiplier - 1.0) * 2.5), clamped to [0.02, 0.98].
 """
@@ -738,7 +727,7 @@ function update_tier_belief!(profile::AILearningProfile, tier::String, realized_
 
     belief = profile.tier_beliefs[tier]
 
-    # Compute continuous evidence from the realized multiplier.
+    # Compute continuous evidence from realized multiplier (matches Python lines 1551-1554)
     multiplier = clamp(realized_multiplier, 0.0, 3.0)
     evidence = clamp(stable_sigmoid((multiplier - 1.0) * 2.5), 0.02, 0.98)
 
@@ -804,7 +793,10 @@ function should_use_ai_for_domain(
         max(0.0, 1.0 - cost_ratio)
     end
 
-    threshold = 0.4 - exploration_bonus
+    # Apply the exploration bonus once (to the score). Subtracting it from the
+    # threshold as well double-applied it, making the first 5 uses of any
+    # domain nearly unconditional for a solvent agent.
+    threshold = 0.4
     decision_score = (trust + exploration_bonus) * cost_factor
     return decision_score > threshold
 end
@@ -1086,88 +1078,10 @@ function add_investment!(
     update_diversification!(portfolio)
 end
 
-"""
-Check for matured investments and process outcomes.
-"""
-function check_matured_investments!(
-    portfolio::Portfolio,
-    current_round::Int,
-    market_conditions::MarketConditions;
-    rng::Random.AbstractRNG = Random.default_rng()
-)::Vector{Dict{String,Any}}
-    newly_matured = Dict{String,Any}[]
-
-    for (investment_key, investment) in collect(portfolio.pending_investments)
-        if current_round >= investment.maturation_round
-            # Calculate failure probability
-            raw_risk = 0.5  # Default risk
-            risk = clamp(raw_risk, 0.05, 0.95)
-
-            # Market adjustments
-            regime_failure = market_conditions.regime_failure_multiplier
-            base_failure = 0.05 + 0.5 * risk * regime_failure
-
-            # Crowding adjustments
-            crowding_metrics = market_conditions.crowding_metrics
-            crowd_idx = get(crowding_metrics, "crowding_index", 0.25)
-            crowd_threshold = 0.35
-            crowd_multiplier = crowd_idx > crowd_threshold ? 1.0 + 0.25 * (crowd_idx - crowd_threshold) : 1.0
-
-            failure_chance = clamp(base_failure * crowd_multiplier, 0.05, 0.9)
-            success = rand(rng) >= failure_chance
-
-            amount = investment.amount
-            if success
-                # Successful investment
-                realized_multiplier = 1.0 + 0.2 * rand(rng)  # Simple return model
-                capital_returned = amount * realized_multiplier
-                investment.defaulted = false
-                investment.raw_success = true
-            else
-                # Failed investment - partial recovery
-                recovery_ratio = clamp(0.2 + 0.2 * rand(rng), 0.0, 0.4)
-                realized_multiplier = recovery_ratio
-                capital_returned = amount * recovery_ratio
-                investment.defaulted = rand(rng) < 0.2 * risk
-                investment.raw_success = false
-            end
-
-            investment.returns = capital_returned
-            investment.matured = true
-            investment.realized_multiplier = realized_multiplier
-            investment.realized_roi = realized_multiplier - 1.0
-            investment.success = success && investment.realized_roi >= 0.0
-
-            # Counterfactual ROI
-            investment.counterfactual_roi = investment.realized_roi
-
-            # Move to matured
-            push!(portfolio.matured_investments, investment)
-            delete!(portfolio.pending_investments, investment_key)
-            delete!(portfolio.active_investments, investment_key)
-            portfolio.locked_capital -= investment.amount
-
-            push!(newly_matured, Dict{String,Any}(
-                "opportunity_id" => investment.opportunity_id,
-                "investment_amount" => investment.amount,
-                "capital_returned" => capital_returned,
-                "success" => investment.success,
-                "raw_success" => investment.raw_success,
-                "defaulted" => investment.defaulted,
-                "net_return" => capital_returned - investment.amount,
-                "ai_level_used" => investment.ai_level_used,
-                "realized_multiplier" => realized_multiplier,
-                "decision_confidence" => investment.decision_confidence
-            ))
-        end
-    end
-
-    if !isempty(newly_matured)
-        update_diversification!(portfolio)
-    end
-
-    return newly_matured
-end
+# REMOVED: check_matured_investments! — a zero-caller legacy stub that used a
+# hard-coded risk (0.5) and a capped 1.0-1.2x return model with no opportunity
+# linkage. The live maturation path is process_matured_investments! in
+# agents.jl, which prices outcomes through realized_return.
 
 """
 Update portfolio diversification score.
@@ -1300,40 +1214,10 @@ function get_response_factor(
     return 1.0 - (uncertainty_level * weight)
 end
 
-"""
-Update response profile from outcome.
-"""
-function update_from_outcome!(
-    profile::UncertaintyResponseProfile,
-    uncertainty_perception::Dict{String,Any},
-    action::String,
-    outcome::Dict{String,Any},
-    market_conditions::Dict{String,Any}
-)
-    success = get(outcome, "success", false)
-    investment_amount = max(get(outcome, "investment_amount", 1.0), 1.0)
-    returns = get(outcome, "capital_returned", 0.0) / investment_amount
-
-    for u_type in keys(profile.response_weights)
-        if haskey(uncertainty_perception, u_type)
-            u_data = uncertainty_perception[u_type]
-            level = if isa(u_data, Dict)
-                get(u_data, "level", get(u_data, "$(split(u_type, "_")[1])_level", 0.0))
-            else
-                0.0
-            end
-
-            push!(profile.outcome_history[u_type], (level, returns, success))
-
-            # Trim to memory limit
-            if length(profile.outcome_history[u_type]) > profile.memory_limit
-                popfirst!(profile.outcome_history[u_type])
-            end
-
-            update_response_weight!(profile, u_type, market_conditions)
-        end
-    end
-end
+# REMOVED: update_from_outcome! — a zero-caller legacy twin of
+# update_uncertainty_response_from_outcome! (agents.jl), which is the live
+# path and maintains its own outcome-history push. Only the shared
+# update_response_weight! below remains in use.
 
 """
 Update response weight for a specific uncertainty type.

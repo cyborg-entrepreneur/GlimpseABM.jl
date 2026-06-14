@@ -24,7 +24,7 @@ function maintain_actions(tier::String, n::Int)
             "round" => 1,
             "ai_level_used" => tier,
             "ai_used" => tier != "none",
-        )
+       )
         for i in 1:n
     ]
 end
@@ -39,7 +39,7 @@ function reuse_actions(tier::String, n::Int)
             "ai_used" => tier != "none",
             "combination_signature" => "shared_combo",
             "is_new_combination" => false,
-        )
+       )
         for i in 1:n
     ]
 end
@@ -54,7 +54,7 @@ function invest_actions(tier::String, opp_ids::Vector{String})
             "ai_used" => tier != "none",
             "opportunity_id" => opp_id,
             "amount" => 1000.0,
-        )
+       )
         for (i, opp_id) in enumerate(opp_ids)
     ]
 end
@@ -67,7 +67,7 @@ end
         premium_state["competitive_recursion"]["level"],
         no_ai_state["competitive_recursion"]["level"];
         atol=1e-12,
-    )
+   )
 
     basic_reuse = recursion_probe_state(reuse_actions("basic", 24))
     premium_reuse = recursion_probe_state(reuse_actions("premium", 24))
@@ -76,7 +76,7 @@ end
         premium_reuse["competitive_recursion"]["level"],
         basic_reuse["competitive_recursion"]["level"];
         atol=1e-12,
-    )
+   )
 
     spread_ids = ["opp_$(i)" for i in 1:24]
     clustered_ids = fill("opp_shared", 24)

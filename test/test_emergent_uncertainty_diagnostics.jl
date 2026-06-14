@@ -37,13 +37,13 @@ using Random
             cfg;
             fixed_ai_level="premium",
             rng=MersenneTwister(123),
-        )
+       )
         failed_agent = EmergentAgent(
             2,
             cfg;
             fixed_ai_level="premium",
             rng=MersenneTwister(124),
-        )
+       )
         failed_agent.alive = false
 
         record_investment_outcome!(alive_agent.uncertainty_metrics, 1.2, 1.0, 0.5)
@@ -53,7 +53,7 @@ using Random
         all_agents = aggregate_emergent_uncertainty_by_tier(
             [alive_agent, failed_agent];
             include_dead=true,
-        )
+       )
 
         @test survivor["premium"]["n_agents"] == 1.0
         @test all_agents["premium"]["n_agents"] == 2.0
@@ -74,7 +74,7 @@ using Random
             initial_capital=5_000_000.0,
             fixed_ai_level="none",
             rng=MersenneTwister(945),
-        )
+       )
         opp = Opportunity(
             id="crowding-exposure-path",
             latent_return_potential=1.2,
@@ -87,7 +87,7 @@ using Random
             capacity=100_000.0,
             config=cfg,
             rng=MersenneTwister(946),
-        )
+       )
 
         push!(agent.active_investments, Dict{String,Any}(
             "opportunity" => opp,
@@ -98,14 +98,14 @@ using Random
             "estimated_return" => 1.1,
             "competition_at_entry" => 0.20,
             "capacity_saturation_at_entry" => 1.60,
-        ))
+       ))
 
         matured = GlimpseABM.process_matured_investments!(
             agent,
             market,
             1;
             market_conditions=market_conditions,
-        )
+       )
 
         @test length(matured) == 1
         outcome = only(matured)

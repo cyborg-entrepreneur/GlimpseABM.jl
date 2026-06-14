@@ -4,15 +4,35 @@ Optional deterministic MT19937 random number generator.
 A self-contained MT19937 generator with a fixed, reproducible floating-point
 stream, selectable via the `USE_NUMPY_RNG` configuration flag as an alternative
 to Julia's native `MersenneTwister` (which produces a different stream from the
-same seed). It implements the MT19937 variant used by the NumPy `RandomState`
-reference, so a run can be reproduced or validated against that widely-used
-reference implementation.
+same seed). Production runs use the Julia native RNG (`USE_NUMPY_RNG = false`);
+this module exists only as an optional, partially NumPy-compatible stream.
 
-Sampling algorithms (matching the reference variant):
-1. Uniform [0,1): genrand_res53 (two 32-bit draws for 53-bit precision)
-2. Normal: Marsaglia polar method with caching (generates pairs)
-3. Gamma: Marsaglia-Tsang method for shape >= 1
-4. Beta: via Gamma (Beta(a,b) = Ga/(Ga+Gb) where Ga~Gamma(a), Gb~Gamma(b))
+PARITY SCOPE (verified empirically against `np.random.RandomState`, 2026-06-09).
+This module provides PARTIAL sampler-level parity with NumPy's `RandomState` —
+a verified subset of samplers matches bit-for-bit; others do not. NO
+stream-level parity claim is made: a full simulation run does NOT reproduce a
+Python/NumPy run draw-for-draw (agent trait initialization alone hits two
+non-matching branches, so the streams diverge at the first agent; generic
+draws such as shuffles and integer ranges also consume the stream
+differently).
+
+Verified bit-for-bit matches with `np.random.RandomState`:
+- seeding (MT19937 state initialization)
+- `numpy_rand` (uniform [0,1), genrand_res53: two 32-bit draws, 53-bit precision)
+- `numpy_randn` (Marsaglia polar method with pair caching)
+- `numpy_gamma` with shape > 1 (Marsaglia-Tsang)
+
+Known NON-matches (do not rely on these for cross-language reproduction):
+- `numpy_randint`: uses modulo reduction, not NumPy's masked rejection
+  sampling — consumes the stream differently AND is statistically biased for
+  ranges that do not divide 2^32.
+- `numpy_gamma` with shape < 1 (different algorithm/draw order) and
+  shape == 1 (NumPy dispatches to standard_exponential; this uses
+  Marsaglia-Tsang).
+- `numpy_beta` with a <= 1 and b <= 1 (NumPy uses Johnk's algorithm in that
+  region; this always uses the Gamma-ratio method).
+- `numpy_exponential`: uses -log(u) where NumPy uses -log(1-u), so individual
+  draws differ.
 """
 
 using Random
@@ -23,7 +43,9 @@ export NumpyRNG, numpy_rand, numpy_randn, numpy_randint, numpy_seed!
 export numpy_gamma, numpy_beta, numpy_uniform, numpy_exponential
 
 """
-A deterministic MT19937 generator reproducing the NumPy `RandomState` stream.
+A deterministic MT19937 generator with partial sampler-level parity to the
+NumPy `RandomState` stream (verified subset only — see the module docstring
+for the parity scope; no stream-level parity claim).
 Caches one normal draw for the polar method (which generates pairs of normals).
 """
 mutable struct NumpyRNG <: Random.AbstractRNG
@@ -80,15 +102,19 @@ function numpy_rand(rng::NumpyRNG, dims::Tuple)::Array{Float64}
 end
 
 """
-Generate a random integer in [0, high) matching NumPy's np.random.randint(high).
-Note: This uses a single uint32, matching NumPy's behavior for small ranges.
+Generate a random integer in [0, high).
+
+NOT NumPy-parity: uses modulo reduction on a single uint32, whereas NumPy's
+np.random.randint uses masked rejection sampling. Draws differ from NumPy and
+the modulo is statistically biased for ranges that do not divide 2^32.
 """
 function numpy_randint(rng::NumpyRNG, high::Integer)::Int
     return Int(rand(rng.mt, UInt32) % high)
 end
 
 """
-Generate a random integer in [low, high) matching NumPy's np.random.randint(low, high).
+Generate a random integer in [low, high). NOT NumPy-parity (see one-argument
+method above).
 """
 function numpy_randint(rng::NumpyRNG, low::Integer, high::Integer)::Int
     return low + numpy_randint(rng, high - low)
@@ -132,16 +158,16 @@ function numpy_randn(rng::NumpyRNG, n::Integer)::Vector{Float64}
 end
 
 # ============================================================================
-# GAMMA DISTRIBUTION - Marsaglia-Tsang method (matches NumPy exactly)
+# GAMMA DISTRIBUTION - Marsaglia-Tsang method (NumPy-parity only for shape > 1)
 # ============================================================================
 
 """
-Generate a Gamma(shape, 1) random variable matching NumPy's np.random.gamma().
-Uses Marsaglia-Tsang method for shape >= 1.
-For shape < 1, uses Ahrens-Dieter algorithm.
+Generate a Gamma(shape, 1) random variable.
 
-Note: The shape < 1 case matches NumPy's algorithm but may have minor
-numerical differences due to floating-point ordering.
+NumPy parity: verified bit-for-bit against np.random.gamma ONLY for shape > 1
+(Marsaglia-Tsang). NOT NumPy-parity for shape < 1 (Ahrens-Dieter here; draws
+differ from NumPy) or shape == 1 (NumPy dispatches to standard_exponential;
+this uses Marsaglia-Tsang).
 """
 function numpy_gamma(rng::NumpyRNG, shape::Real)::Float64
     shape = Float64(shape)
@@ -203,12 +229,17 @@ function numpy_gamma(rng::NumpyRNG, shape::Real, scale::Real)::Float64
 end
 
 # ============================================================================
-# BETA DISTRIBUTION - Via Gamma (matches NumPy exactly)
+# BETA DISTRIBUTION - Via Gamma (NumPy-parity only when the Gamma draws match)
 # ============================================================================
 
 """
-Generate a Beta(a, b) random variable matching NumPy's np.random.beta().
-Uses the Gamma ratio method: Beta(a,b) = Ga/(Ga+Gb)
+Generate a Beta(a, b) random variable via the Gamma ratio method:
+Beta(a,b) = Ga/(Ga+Gb).
+
+NOT NumPy-parity when a <= 1 and b <= 1: NumPy uses Johnk's algorithm in that
+region, this implementation always uses the Gamma ratio. Parity also fails
+whenever either Gamma draw hits a non-matching gamma branch (shape <= 1; see
+numpy_gamma).
 """
 function numpy_beta(rng::NumpyRNG, a::Real, b::Real)::Float64
     ga = numpy_gamma(rng, a)
@@ -221,15 +252,18 @@ end
 # ============================================================================
 
 """
-Generate a Uniform(low, high) random variable matching NumPy.
+Generate a Uniform(low, high) random variable (affine transform of
+numpy_rand, which is verified NumPy-parity).
 """
 function numpy_uniform(rng::NumpyRNG, low::Real=0.0, high::Real=1.0)::Float64
     return low + (high - low) * numpy_rand(rng)
 end
 
 """
-Generate an Exponential(scale) random variable matching NumPy.
-Exponential is Gamma(1, scale).
+Generate an Exponential(scale) random variable.
+
+NOT NumPy-parity: uses -log(u) where NumPy's standard_exponential uses
+-log(1-u), so individual draws differ from np.random.exponential.
 """
 function numpy_exponential(rng::NumpyRNG, scale::Real=1.0)::Float64
     # Exponential is just -log(U) * scale
@@ -306,7 +340,9 @@ end
 
 # ============================================================================
 # DISTRIBUTIONS.JL INTEGRATION
-# Override rand() for common distributions to use our numpy-compatible samplers
+# Override rand() for common distributions to use the samplers above.
+# Parity caveats from the module docstring apply: only the verified subset
+# (uniform, normal, gamma shape > 1) matches NumPy draw-for-draw.
 # ============================================================================
 
 using Distributions

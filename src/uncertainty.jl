@@ -202,9 +202,9 @@ function KnightianUncertaintyEnvironment(
     rng::Random.AbstractRNG = Random.default_rng()
 )
     history_window = max(5, Int(getfield_default(config, :NOVELTY_HISTORY_WINDOW, 15)))
-    short_term_window = Int(getfield_default(config, :UNCERTAINTY_SHORT_WINDOW, 5))
-    short_term_decay = Float64(getfield_default(config, :UNCERTAINTY_SHORT_DECAY, 0.85))
-    ai_signal_history = max(10, Int(getfield_default(config, :AI_SIGNAL_HISTORY, 200)))
+    short_term_window = Int(getfield_default(config, :UNCERTAINTY_SHORT_WINDOW, 18))
+    short_term_decay = Float64(getfield_default(config, :UNCERTAINTY_SHORT_DECAY, 0.0))
+    ai_signal_history = max(10, Int(getfield_default(config, :AI_SIGNAL_HISTORY, 420)))
 
     return KnightianUncertaintyEnvironment(
         config,
@@ -373,20 +373,25 @@ function _update_volatility_state!(env::KnightianUncertaintyEnvironment, action_
     market_prev = Float64(get(env._volatility_state, "market_prev", 0.0))
     market_delta = abs(market_signal - market_prev)
 
-    action_weight = Float64(getfield_default(cfg, :UNCERTAINTY_ACTION_VARIANCE_WEIGHT, 0.10))
-    ai_weight = Float64(getfield_default(cfg, :UNCERTAINTY_AI_SWITCH_WEIGHT, 0.07))
-    market_weight = Float64(getfield_default(cfg, :UNCERTAINTY_MARKET_RETURN_WEIGHT, 0.12))
+    action_weight = Float64(getfield_default(cfg, :UNCERTAINTY_ACTION_VARIANCE_WEIGHT, 0.14))
+    ai_weight = Float64(getfield_default(cfg, :UNCERTAINTY_AI_SWITCH_WEIGHT, 0.09))
+    market_weight = Float64(getfield_default(cfg, :UNCERTAINTY_MARKET_RETURN_WEIGHT, 0.14))
 
     raw = action_weight * action_delta + ai_weight * ai_delta + market_weight * market_delta
-    decay = Float64(getfield_default(cfg, :UNCERTAINTY_VOLATILITY_DECAY, 0.85))
-    prev_vol = Float64(get(env._volatility_state, "volatility_metric", 0.0))
-    smoothed = prev_vol * decay + (1.0 - decay) * raw
-    scaling = Float64(getfield_default(cfg, :UNCERTAINTY_VOLATILITY_SCALING, 0.18))
+    decay = Float64(getfield_default(cfg, :UNCERTAINTY_VOLATILITY_DECAY, 0.87))
+    # The EWMA state must be kept on the unscaled (raw) axis; feeding the
+    # scaled output back in as the prior would compound the scaling each round,
+    # collapsing the effective persistence to decay*scaling and attenuating the
+    # steady state by ~1/(1 + decay*(1 - scaling)/(1 - decay)).
+    prev_smoothed = Float64(get(env._volatility_state, "volatility_smoothed", 0.0))
+    smoothed = prev_smoothed * decay + (1.0 - decay) * raw
+    scaling = Float64(getfield_default(cfg, :UNCERTAINTY_VOLATILITY_SCALING, 0.45))
     volatility = smoothed * scaling
 
     env._volatility_state["action_prev"] = copy(action_shares)
     env._volatility_state["ai_prev"] = copy(ai_shares)
     env._volatility_state["market_prev"] = market_signal
+    env._volatility_state["volatility_smoothed"] = smoothed
     env._volatility_state["volatility_metric"] = volatility
 
     return volatility
@@ -426,10 +431,49 @@ function _rolling_ai_signal_stats(env::KnightianUncertaintyEnvironment)
 
     exposure_count = length(recent)
     disconfirmation_count = count(record -> Bool(get(record, "suspected_ai_failure", false)), recent)
+    # Overall rate across ALL matured-investment exposures (AI and human alike).
+    # Forecast disconfirmation is a property of venture-return unpredictability,
+    # not of AI presence, so the headline rate covers everyone.
     disconfirmation_rate = exposure_count > 0 ? clamp(disconfirmation_count / exposure_count, 0.0, 1.0) : 0.0
+
+    # Population split: AI-assisted exposures vs the human (non-AI) baseline.
+    # Records written before the symmetrization carry no "ai_assisted" flag;
+    # they were AI-only by construction, so fall back to the behavior tier.
+    _record_ai_assisted(record) = Bool(get(record, "ai_assisted",
+        String(get(record, "ai_level", "none")) != "none"))
+    ai_exposure_count = 0
+    ai_disconfirmation_count = 0
+    baseline_exposure_count = 0
+    baseline_disconfirmation_count = 0
+    for record in recent
+        failed = Bool(get(record, "suspected_ai_failure", false))
+        if _record_ai_assisted(record)
+            ai_exposure_count += 1
+            ai_disconfirmation_count += failed ? 1 : 0
+        else
+            baseline_exposure_count += 1
+            baseline_disconfirmation_count += failed ? 1 : 0
+        end
+    end
+    ai_rate = ai_exposure_count > 0 ?
+        clamp(ai_disconfirmation_count / ai_exposure_count, 0.0, 1.0) : 0.0
+    baseline_rate = baseline_exposure_count > 0 ?
+        clamp(baseline_disconfirmation_count / baseline_exposure_count, 0.0, 1.0) : 0.0
+    # Uncertainty attributable to AI is its EXCESS forecast error over the
+    # human baseline. When AI forecasts are no worse than human ones this is
+    # ~0 instead of a hard-wired AI-presence offset (a known asymmetry: uncertainty re-entering only for AI users through a
+    # channel with no human analogue).
+    excess_ai_rate = max(0.0, ai_rate - baseline_rate)
 
     severity_values = Float64[]
     miscalibration_values = Float64[]
+    # (design note): miscalibration is split by population the
+    # same way the disconfirmation rate is. Confident-but-wrong forecasts are
+    # a property of Pareto-tailed venture returns for everyone; only the
+    # EXCESS of the AI population's miscalibration over the human baseline is
+    # AI-attributable.
+    ai_miscalibration_values = Float64[]
+    baseline_miscalibration_values = Float64[]
     for record in recent
         severity = get(record, "severity", nothing)
         if !isnothing(severity)
@@ -451,28 +495,85 @@ function _rolling_ai_signal_stats(env::KnightianUncertaintyEnvironment)
             value = Float64(miscalibration)
             if isfinite(value)
                 push!(miscalibration_values, value)
+                if _record_ai_assisted(record)
+                    push!(ai_miscalibration_values, value)
+                else
+                    push!(baseline_miscalibration_values, value)
+                end
             end
         catch
             # Ignore malformed diagnostic payloads.
         end
     end
 
-    confidence_miscalibration = !isempty(miscalibration_values) ? safe_mean(miscalibration_values) : 0.0
-    if !isfinite(confidence_miscalibration)
-        confidence_miscalibration = 0.0
+    _finite_mean_or_zero(values::Vector{Float64}) = begin
+        m = !isempty(values) ? safe_mean(values) : 0.0
+        isfinite(m) ? m : 0.0
     end
-    disconfirmation_severity = !isempty(severity_values) ? safe_mean(severity_values) : 0.0
-    if !isfinite(disconfirmation_severity)
-        disconfirmation_severity = 0.0
-    end
+
+    # Pooled value retained for symmetric/diagnostic consumers.
+    confidence_miscalibration = _finite_mean_or_zero(miscalibration_values)
+    ai_miscalibration = _finite_mean_or_zero(ai_miscalibration_values)
+    baseline_miscalibration = _finite_mean_or_zero(baseline_miscalibration_values)
+    # AI-attributable miscalibration: excess over the human baseline (~0 when
+    # AI forecasts are calibrated no worse than human ones). AI-specific
+    # consumers (the recursion-perception component) read THIS.
+    excess_miscalibration = max(0.0, ai_miscalibration - baseline_miscalibration)
+    disconfirmation_severity = _finite_mean_or_zero(severity_values)
 
     return (
         exposure_count=exposure_count,
         disconfirmation_count=disconfirmation_count,
+        # disconfirmation_rate keeps its name but is now the OVERALL rate
+        # across both populations (the field overall_rate aliases it).
         disconfirmation_rate=disconfirmation_rate,
         disconfirmation_severity=disconfirmation_severity,
         confidence_miscalibration=confidence_miscalibration,
+        ai_miscalibration=ai_miscalibration,
+        baseline_miscalibration=baseline_miscalibration,
+        excess_miscalibration=excess_miscalibration,
+        overall_rate=disconfirmation_rate,
+        baseline_rate=baseline_rate,
+        ai_rate=ai_rate,
+        excess_ai_rate=excess_ai_rate,
+        ai_exposure_count=ai_exposure_count,
+        baseline_exposure_count=baseline_exposure_count,
     )
+end
+
+"""
+(design note): once-per-round cache for
+`_rolling_ai_signal_stats`. The rolling stats are a pure function of the
+recorded exposure window, but the uncached function was called once per agent
+from perceive_uncertainty (plus once from measure_uncertainty_state!), an
+O(N_agents × window) rescan per round. The cache lives on
+env.ai_uncertainty_signals and is keyed by (round, record count): the record
+count guard keeps the value EXACT when new exposures land mid-round (pivot
+exposures are recorded during the decision phase — F2b), instead of freezing
+the first agent's view for the rest of the round.
+
+Thread-safety: a simulation is single-threaded internally (no @threads/@spawn
+anywhere in src/); the only threaded harness is the robustness suite script,
+which threads across RUNS (Threads.@threads over run_idx,
+run_reviewer_robustness_suite.jl) with each run owning its own
+KnightianUncertaintyEnvironment — so this per-env cache is never shared
+across threads (same isolation argument as the strategic-opacity
+once-per-round guard).
+"""
+function _rolling_ai_signal_stats_cached(env::KnightianUncertaintyEnvironment, round_num::Int)
+    signals = env.ai_uncertainty_signals
+    n_records = length(_observable_ai_disconfirmation_records(env))
+    cached_round = get(signals, "_ai_signal_stats_cache_round", -1)
+    cached_count = get(signals, "_ai_signal_stats_cache_records", -1)
+    if cached_round == round_num && cached_count == n_records
+        cached = get(signals, "_ai_signal_stats_cache", nothing)
+        isnothing(cached) || return cached
+    end
+    stats = _rolling_ai_signal_stats(env)
+    signals["_ai_signal_stats_cache"] = stats
+    signals["_ai_signal_stats_cache_round"] = round_num
+    signals["_ai_signal_stats_cache_records"] = n_records
+    return stats
 end
 
 function _rolling_hidden_ai_signal_stats(env::KnightianUncertaintyEnvironment)
@@ -529,6 +630,14 @@ function record_observable_ai_disconfirmation!(
     ai_confidence::Float64 = 0.5,
     accuracy_score::Float64 = 0.5,
     success::Bool = false,
+    # Forecast-disconfirmation events are now recorded for EVERY matured
+    # investment, not only AI-assisted ones (symmetric treatment of Knightian
+    # uncertainty: Pareto-tailed venture returns disconfirm human forecasts
+    # too). The flag splits the rolling stats into an AI population and a
+    # human baseline so AI-specific channels can read EXCESS error only.
+    # Default mirrors the historical behavior for callers that predate the
+    # flag: a non-"none" behavior tier implies AI assistance.
+    ai_assisted::Bool = ai_level != "none",
 )
     records = _observable_ai_disconfirmation_records(env)
     confidence = isfinite(ai_confidence) ? clamp(ai_confidence, 0.0, 1.0) : 0.5
@@ -539,6 +648,7 @@ function record_observable_ai_disconfirmation!(
         "round" => round_num,
         "agent_id" => agent_id,
         "ai_level" => ai_level,
+        "ai_assisted" => ai_assisted,
         "domain" => domain,
         "suspected_ai_failure" => suspected_ai_failure,
         "disconfirmation_score" => clamp(disconfirmation_score, 0.0, 1.0),
@@ -644,14 +754,29 @@ function record_ai_signals!(
     # first loop over all keys; the second loop then adds this round's new
     # counts to the already-decayed priors (applying decay again in the second
     # loop would double-decay any opp receiving new counts).
-    decay = Float64(getfield_default(env.config, :AI_HERDING_DECAY, 1.0))
+    decay = Float64(getfield_default(env.config, :AI_HERDING_DECAY, 0.5))
     for key in collect(keys(herding_patterns))
         herding_patterns[key] *= decay
+        # Prune entries that have decayed to numerical irrelevance so the
+        # pattern dict tracks recent behavior rather than run-lifetime history.
+        if herding_patterns[key] < 1e-4
+            delete!(herding_patterns, key)
+        end
     end
     for (opp_id, count) in herding_counts
         prior = get(herding_patterns, opp_id, 0.0)  # already decayed above
         herding_patterns[opp_id] = prior + count
     end
+
+    # Maintain matching decayed activity stocks so herding intensity can be
+    # normalized as a share of recent activity rather than a cumulative stock
+    # divided by a per-round flow (which pins at the clamp within a few rounds).
+    ai_invest_new = isempty(herding_counts) ? 0 : sum(values(herding_counts))
+    signals = env.ai_uncertainty_signals
+    signals["ai_invest_stock"] =
+        Float64(get(signals, "ai_invest_stock", 0.0)) * decay + ai_invest_new
+    signals["action_stock"] =
+        Float64(get(signals, "action_stock", 0.0)) * decay + length(agent_actions)
 
     # Limit history size
     max_history = env._ai_signal_history
@@ -667,7 +792,9 @@ function record_ai_signals!(
 
     # Hidden hallucination/actual-accuracy telemetry is diagnostic only. Do not
     # update behavioral short-term buffers here; public uncertainty responds to
-    # observable disconfirmation recorded after AI-assisted outcomes mature.
+    # observable forecast disconfirmation recorded after matured outcomes
+    # (every matured investment, AI-assisted or not — see
+    # record_observable_ai_disconfirmation!).
 end
 
 """
@@ -964,11 +1091,29 @@ function measure_uncertainty_state!(
         popfirst!(env._action_history)
     end
 
-    # AI herding patterns
+    # AI herding intensity = participation x excess concentration.
+    # Participation is the decayed share of recent actions that were AI-assisted
+    # investments; concentration is the HHI of the decayed per-opportunity
+    # AI-invest distribution in excess of the HHI uniform random allocation
+    # would produce at the same volume (E[HHI_uniform] = 1/K + (1 - 1/K)/n).
+    # Dispersed AI investing therefore scores ~0 no matter how much AI activity
+    # exists; only convergence on few opportunities registers as herding.
     ai_herding_patterns = get(env.ai_uncertainty_signals, "ai_herding_patterns", Dict())
-    if !isempty(ai_herding_patterns)
-        herding_total = sum(values(ai_herding_patterns))
-        ai_herding_intensity = clamp(herding_total / max(1.0, total_actions), 0.0, 1.0)
+    ai_invest_stock = Float64(get(env.ai_uncertainty_signals, "ai_invest_stock", 0.0))
+    action_stock = Float64(get(env.ai_uncertainty_signals, "action_stock", 0.0))
+    n_opps_active = (!isnothing(market) && hasfield(typeof(market), :opportunities)) ?
+        length(market.opportunities) : 0
+    if !isempty(ai_herding_patterns) && ai_invest_stock > 1e-9 && n_opps_active >= 2
+        pattern_total = sum(values(ai_herding_patterns))
+        herding_hhi = sum((v / pattern_total)^2 for v in values(ai_herding_patterns))
+        k_opps = Float64(n_opps_active)
+        expected_uniform_hhi = 1.0 / k_opps +
+            (1.0 - 1.0 / k_opps) / max(1.0, ai_invest_stock)
+        excess_concentration = clamp(
+            (herding_hhi - expected_uniform_hhi) / max(1e-9, 1.0 - expected_uniform_hhi),
+            0.0, 1.0)
+        ai_participation = clamp(ai_invest_stock / max(1.0, action_stock), 0.0, 1.0)
+        ai_herding_intensity = clamp(ai_participation * excess_concentration, 0.0, 1.0)
     else
         ai_herding_intensity = 0.0
     end
@@ -1004,21 +1149,30 @@ function measure_uncertainty_state!(
         end
     end
 
-    # Calculate knowledge-based metrics
-    avg_knowledge = if !isnothing(env.knowledge_base)
-        Float64(get_average_agent_knowledge(env.knowledge_base))
+    # Calculate knowledge-based metrics. The gap term is the share of the
+    # collectively knowable (distinct pieces in the knowledge base) that the
+    # average agent does NOT hold; it falls as diffusion spreads knowledge and
+    # rises again when innovation expands the frontier faster than agents learn.
+    avg_knowledge, total_knowledge = if !isnothing(env.knowledge_base)
+        (Float64(get_average_agent_knowledge(env.knowledge_base)),
+         Float64(get_total_knowledge_count(env.knowledge_base)))
     else
-        0.0
+        (0.0, 0.0)
     end
     total_opportunities = length(market.opportunities)
-    n_agents = Int(getfield_default(env.config, :N_AGENTS, 1))
-    knowledge_norm = avg_knowledge / max(1.0, total_opportunities / max(1, n_agents / 4))
+    knowledge_norm = avg_knowledge / max(1.0, total_knowledge)
 
     gap_values = collect(values(knowledge_gaps))
     gap_pressure = !isempty(gap_values) ? clamp(safe_mean(gap_values), 0.0, 1.0) : 0.0
     gap_coverage = total_opportunities > 0 ? length(knowledge_gaps) / total_opportunities : 0.0
-    ai_signal_stats = _rolling_ai_signal_stats(env)
+    # F5: round-keyed cached read (measure_uncertainty_state! is the round
+    # producer; perceive_uncertainty reuses the same cache per agent).
+    ai_signal_stats = _rolling_ai_signal_stats_cached(env, round_num)
     hidden_ai_signal_stats = _rolling_hidden_ai_signal_stats(env)
+    # Actor ignorance reads the OVERALL forecast-disconfirmation rate: every
+    # agent faces irreducible venture-return unpredictability, AI-assisted or
+    # not. Only the EXCESS of AI error over the human baseline is treated as
+    # AI-attributable (see the recursion-perception consumers).
     disconfirmation_rate = ai_signal_stats.disconfirmation_rate
     knowledge_gap_term = 1.0 - clamp(knowledge_norm, 0.0, 1.0)
 
@@ -1032,23 +1186,37 @@ function measure_uncertainty_state!(
         "knowledge_gap" => actor_w.knowledge_gap_weight * knowledge_gap_term,
         "gap_pressure" => actor_w.gap_pressure_weight * gap_pressure,
         "gap_coverage" => actor_w.gap_coverage_weight * gap_coverage,
-        "ai_disconfirmation" => actor_w.ai_disconfirmation_weight * disconfirmation_rate,
+        # Renamed from "ai_disconfirmation": the channel is symmetric now
+        # (every matured investment, AI or not, contributes an exposure), so
+        # the component reflects forecast unpredictability faced by everyone.
+        # The weight field keeps its historical name for config compatibility.
+        "forecast_disconfirmation" => actor_w.ai_disconfirmation_weight * disconfirmation_rate,
         "exploration_reduction" => -actor_w.exploration_reduction_weight * share_explore,
         "maintain_increase" => actor_w.maintain_increase_weight * share_maintain,
     )
     actor_raw = sum(values(actor_components))
     actor_level = clamp(actor_raw, 0.0, 1.0)
 
-    # Baseline (no AI) actor ignorance
+    # Baseline (no AI) actor ignorance. The no-AI counterfactual is the human
+    # baseline disconfirmation rate, not zero: forecast disconfirmation exists
+    # without AI, so only the AI-attributable excess enters the AI delta.
     actor_components_no_ai = copy(actor_components)
-    actor_components_no_ai["ai_disconfirmation"] = 0.0
+    actor_components_no_ai["forecast_disconfirmation"] =
+        actor_w.ai_disconfirmation_weight * ai_signal_stats.baseline_rate
     actor_level_no_ai = clamp(sum(values(actor_components_no_ai)), 0.0, 1.0)
     ai_effects["ai_ignorance_delta"] = actor_level - actor_level_no_ai
 
     _update_short_term!(env, "actor_ignorance", actor_level)
     env.actor_ignorance_state["level"] = actor_level
+    # "ai_disconfirmation_rate" is retained as a legacy alias; since the
+    # symmetrization it holds the OVERALL forecast-disconfirmation rate. The
+    # population-split rates are exported under explicit new names below.
     env.actor_ignorance_state["ai_disconfirmation_rate"] = disconfirmation_rate
     env.actor_ignorance_state["hallucination_rate"] = disconfirmation_rate  # legacy alias
+    env.actor_ignorance_state["forecast_disconfirmation_rate"] = disconfirmation_rate
+    env.actor_ignorance_state["baseline_disconfirmation_rate"] = ai_signal_stats.baseline_rate
+    env.actor_ignorance_state["ai_population_disconfirmation_rate"] = ai_signal_stats.ai_rate
+    env.actor_ignorance_state["excess_ai_disconfirmation_rate"] = ai_signal_stats.excess_ai_rate
     env.actor_ignorance_state["ai_signal_exposures"] = ai_signal_stats.exposure_count
     env.actor_ignorance_state["ai_disconfirmation_count"] = ai_signal_stats.disconfirmation_count
     env.actor_ignorance_state["ai_hallucination_count"] = ai_signal_stats.disconfirmation_count  # legacy alias
@@ -1065,8 +1233,12 @@ function measure_uncertainty_state!(
         "volatility" => volatility,
         "ai_signal_exposures" => ai_signal_stats.exposure_count,
         "ai_disconfirmation_count" => ai_signal_stats.disconfirmation_count,
-        "ai_disconfirmation_rate" => disconfirmation_rate,
+        "ai_disconfirmation_rate" => disconfirmation_rate,                  # legacy alias: now OVERALL rate
         "ai_disconfirmation_severity" => ai_signal_stats.disconfirmation_severity,
+        "forecast_disconfirmation_rate" => disconfirmation_rate,
+        "baseline_disconfirmation_rate" => ai_signal_stats.baseline_rate,
+        "ai_population_disconfirmation_rate" => ai_signal_stats.ai_rate,
+        "excess_ai_disconfirmation_rate" => ai_signal_stats.excess_ai_rate,
         "ai_hallucination_count" => ai_signal_stats.disconfirmation_count,  # legacy alias
         "hallucination_rate" => disconfirmation_rate,                       # legacy alias
         "hidden_ai_signal_exposures" => hidden_ai_signal_stats.exposure_count,
@@ -1090,7 +1262,9 @@ function measure_uncertainty_state!(
         end
     end
     base_practical = !isempty(timing_levels) ? safe_mean(timing_levels) : 0.3
-    timing_variability = !isempty(timing_levels) ? std(timing_levels) : 0.0
+    # Bessel-corrected std of a single element is NaN in Julia (NumPy ddof=0
+    # returns 0.0); guard so a one-opportunity market can't poison the round.
+    timing_variability = length(timing_levels) > 1 ? std(timing_levels) : 0.0
 
     market_volatility = Float64(market.volatility)
     regime = hasfield(typeof(market), :market_regime) ? market.market_regime : "normal"
@@ -1139,8 +1313,8 @@ function measure_uncertainty_state!(
     crowding_pressure = clamp(sum(values(crowding_components)), 0.0, 1.0)
     ai_usage_pressure = clamp(1.0 - ai_share_none, 0.0, 1.0)
 
-    crowd_weight = Float64(getfield_default(env.config, :UNCERTAINTY_CROWDING_WEIGHT, 0.12))
-    competitive_weight = Float64(getfield_default(env.config, :UNCERTAINTY_COMPETITIVE_WEIGHT, 0.08))
+    crowd_weight = Float64(getfield_default(env.config, :UNCERTAINTY_CROWDING_WEIGHT, 0.18))
+    competitive_weight = Float64(getfield_default(env.config, :UNCERTAINTY_COMPETITIVE_WEIGHT, 0.12))
     herding_weight = Float64(getfield_default(env.config, :UNCERTAINTY_AI_HERDING_WEIGHT, 0.10))
 
     practical_components = Dict{String,Float64}(
@@ -1543,6 +1717,11 @@ function _decision_confidence_diagnostics_from_components(;
     recent_success_rate::Float64,
     ai_success_rate::Float64,
     avg_ai_trust::Float64,
+    # When false, the AI-experience multiplier and AI-trust/hallucination
+    # confidence terms are neutralized: an agent not using AI should derive
+    # neither confidence nor doubt from beliefs about a tool it is not using
+    # (mirrors the counts_as_ai_use gate on ai_interpretation_reliability).
+    ai_used::Bool = true,
     mean_roi::Float64 = 0.0,
     return_evidence::Union{Float64,Nothing} = nothing,
     risk_tolerance::Float64,
@@ -1557,7 +1736,8 @@ function _decision_confidence_diagnostics_from_components(;
 
     experience_multiplier = clamp(0.4 + 1.4 * recent_success_rate * competence_trait, 0.2, 1.8)
     ai_effective_trust = clamp(avg_ai_trust, 0.0, 1.0)
-    ai_experience_multiplier = clamp(0.4 + 1.4 * ai_success_rate * ai_effective_trust, 0.2, 1.8)
+    ai_experience_multiplier = ai_used ?
+        clamp(0.4 + 1.4 * ai_success_rate * ai_effective_trust, 0.2, 1.8) : 1.0
     evidence = isnothing(return_evidence) ? mean_roi : return_evidence
     evidence = isfinite(evidence) ? evidence : 0.0
 
@@ -1574,7 +1754,8 @@ function _decision_confidence_diagnostics_from_components(;
     decision_confidence = stable_sigmoid(3.0 * (raw_confidence - 0.5))
     decision_confidence = isfinite(decision_confidence) ? decision_confidence : 0.5
 
-    confidence_multiplier = 1 - 0.4 * hallucination_rate + 0.3 * avg_ai_trust
+    confidence_multiplier = ai_used ?
+        (1 - 0.4 * hallucination_rate + 0.3 * avg_ai_trust) : 1.0
     confidence_multiplier = clamp(confidence_multiplier, 0.5, 1.3)
     final_pre_clamp = decision_confidence * confidence_multiplier
     final_confidence = clamp(final_pre_clamp, 0.02, 0.98)
@@ -1628,11 +1809,24 @@ function _recent_outcome_experience_stats(
     n_roi_outcomes = 0
 
     if !isempty(recent_outcomes)
-        observable_outcomes = filter(o -> get(o, "action", "") in ("invest", "innovate", "explore"), recent_outcomes)
+        # "pivot" records (open-action extension A1) only exist when
+        # ENABLE_PIVOT is on, so including them leaves all default runs
+        # bit-identical while letting experience-based learning see the
+        # realized recovery multiple (recovered/committed < 1) honestly.
+        observable_outcomes = filter(o -> get(o, "action", "") in ("invest", "innovate", "explore", "pivot"), recent_outcomes)
         n_outcomes = length(observable_outcomes)
         if !isempty(observable_outcomes)
-            recent_success_rate = count(o -> get(o, "success", false), observable_outcomes) / length(observable_outcomes)
-            ai_outcomes = filter(o -> get(o, "ai_used", false), observable_outcomes)
+            # (design note): pivots are EXCLUDED from the
+            # Boolean success channels — a censored salvage at a
+            # policy-determined haircut is neither a success nor a
+            # maturity-grade failure, and counting every pivot as a failure
+            # would double-punish the abandonment option (the cash multiple
+            # below already carries the loss into return_evidence honestly).
+            boolean_outcomes = filter(o -> get(o, "action", "") != "pivot", observable_outcomes)
+            if !isempty(boolean_outcomes)
+                recent_success_rate = count(o -> get(o, "success", false), boolean_outcomes) / length(boolean_outcomes)
+            end
+            ai_outcomes = filter(o -> get(o, "ai_used", false), boolean_outcomes)
             if !isempty(ai_outcomes)
                 ai_success_rate = count(o -> get(o, "success", false), ai_outcomes) / length(ai_outcomes)
             else
@@ -1726,16 +1920,10 @@ function _observable_opportunity_signal(
         weights.opportunity_market_impact_weight * impact_trace
     )
 
-    lifecycle = _observable_opp_string(opp, :lifecycle_stage, "emerging")
-    lifecycle_signal = if lifecycle == "mature"
-        0.90
-    elseif lifecycle == "growing"
-        0.70
-    elseif lifecycle == "declining"
-        0.80
-    else
-        0.30
-    end
+    # Constant lifecycle term pinned at the "emerging" value (0.30): the staged
+    # opportunity lifecycle was excised 2026-06-09 as unreachable (review
+    # decision #4) — every opportunity stayed "emerging" in practice.
+    lifecycle_signal = 0.30
 
     signal = (
         weights.opportunity_signal_intrinsic_weight * intrinsic_legibility +
@@ -2201,20 +2389,13 @@ function perceive_uncertainty(
     # Timing pressure
     timing_pressure = Dict{String,Float64}()
     for opp in visible_opportunities
-        lifecycle = hasfield(typeof(opp), :lifecycle_stage) ? opp.lifecycle_stage : "emerging"
         competition = hasfield(typeof(opp), :competition) ? opp.competition : 0.0
         adoption = hasfield(typeof(opp), :market_share) ? opp.market_share : 0.0
 
+        # The former per-stage lifecycle multiplier was excised 2026-06-09
+        # (review decision #4): every opportunity stayed "emerging", whose
+        # multiplier was 1.0, so it never altered urgency.
         urgency = competition * pw.timing_competition_weight + adoption * pw.timing_adoption_weight
-        urgency *= if lifecycle == "declining"
-            0.3
-        elseif lifecycle == "mature"
-            0.6
-        elseif lifecycle == "growing"
-            1.2
-        else
-            1.0
-        end
 
         opp_id = hasfield(typeof(opp), :id) ? opp.id : "opp_unknown"
         timing_pressure[opp_id] = urgency
@@ -2520,9 +2701,22 @@ function perceive_uncertainty(
     # recursion. The agent-specific hallucination_rate above is based on the
     # agent's learned suspected disconfirmation history; hidden AI telemetry is
     # diagnostic only and does not enter this behavioral channel.
-    ai_signal_stats = _rolling_ai_signal_stats(env)
-    ai_disconfirmation_pressure = ai_signal_stats.disconfirmation_rate
-    confidence_miscalibration = ai_signal_stats.confidence_miscalibration
+    #
+    # This is an AI-SPECIFIC channel, so it reads the EXCESS of the AI
+    # population's forecast-disconfirmation rate over the human baseline, not
+    # the overall rate. Pareto-tailed venture returns make large forecast
+    # errors ubiquitous for everyone; charging the full rate to AI presence
+    # would hard-wire an AI offset with no human analogue (a modeling concern). When AI forecasts are no worse than human ones this pressure is ~0.
+    # F5: cached per (round, record count) — perceive_uncertainty runs once
+    # per agent, and the rolling stats are a pure function of the recorded
+    # exposure window, so per-agent recomputation was pure waste.
+    ai_signal_stats = _rolling_ai_signal_stats_cached(env, market_conditions.round)
+    ai_disconfirmation_pressure = ai_signal_stats.excess_ai_rate
+    # F4: this is an AI-SPECIFIC perception component, so it reads the EXCESS
+    # of the AI population's confidence miscalibration over the human
+    # baseline (the pooled confidence_miscalibration field remains available
+    # for symmetric/diagnostic consumers).
+    confidence_miscalibration = ai_signal_stats.excess_miscalibration
 
     ai_herding_intensity = Float64(get(env.practical_indeterminism_state, "ai_herding_intensity", 0.0))
     capital_crowding = Float64(get(market_conditions.crowding_metrics, "crowding_index", 0.0))
@@ -2572,15 +2766,25 @@ function perceive_uncertainty(
         pw.recursion_prior_weight,
     )
 
-    # Update strategic opacity
-    strategic_opacity = clamp(
-        Float64(get(env.competitive_recursion_state, "strategic_opacity", 0.0)) * pw.strategic_opacity_decay +
-        ai_disconfirmation_pressure * pw.strategic_opacity_disconfirmation_weight +
-        avg_pressure * pw.strategic_opacity_pressure_weight +
-        volatility * pw.strategic_opacity_volatility_weight,
-        0.0, 1.0
-    )
-    env.competitive_recursion_state["strategic_opacity"] = strategic_opacity
+    # Update strategic opacity at most once per round. perceive_uncertainty is
+    # called once per agent, so an unguarded update would decay the shared
+    # state by decay^N_alive per round (N- and order-dependent), violating the
+    # parameter's per-round decay semantics. Diagnostic-only state: the first
+    # perceiving agent's signals set this round's update.
+    opacity_round = Int(get(env.competitive_recursion_state, "strategic_opacity_round", -1))
+    if opacity_round != market_conditions.round
+        strategic_opacity = clamp(
+            Float64(get(env.competitive_recursion_state, "strategic_opacity", 0.0)) * pw.strategic_opacity_decay +
+            ai_disconfirmation_pressure * pw.strategic_opacity_disconfirmation_weight +
+            avg_pressure * pw.strategic_opacity_pressure_weight +
+            volatility * pw.strategic_opacity_volatility_weight,
+            0.0, 1.0
+        )
+        env.competitive_recursion_state["strategic_opacity"] = strategic_opacity
+        env.competitive_recursion_state["strategic_opacity_round"] = market_conditions.round
+    else
+        strategic_opacity = Float64(get(env.competitive_recursion_state, "strategic_opacity", 0.0))
+    end
 
     # Short-term buffer integration
     short_recursion = _get_short_term_average(env, "competitive_recursion"; fallback=recursion_raw, agent_id=agent_id)
@@ -2662,7 +2866,21 @@ function perceive_uncertainty(
     # DECISION CONFIDENCE
     # ========================================================================
 
-    # Overall uncertainty from all dimensions
+    # Overall uncertainty from all dimensions.
+    #
+    # DESIGN STATEMENT — agentic-novelty sign (decision resolved 2026-06-09,
+    # the design notes): novelty enters DECISION
+    # CONFIDENCE inverted, via (1 − novelty) under the *_novelty_resolved_
+    # weight. The theory: agentic novelty the agent itself perceives represents
+    # opportunity space the agent has actively opened — self-authored novelty
+    # is experienced as agency, not as threat, so higher perceived novelty
+    # REDUCES felt uncertainty at the decision moment even though the
+    # MEASUREMENT layer correctly reports novelty as an uncertainty dimension
+    # (the agent's confidence and the analyst's uncertainty accounting are
+    # different constructs and may legitimately diverge). This must be stated
+    # explicitly in the model description, where a reader seeing this
+    # composition without the design statement will call it a sign error.
+    # The field name (novelty_resolved_weight) encodes the intent.
     total_uncertainty = (
         ignorance_level * pw.total_uncertainty_actor_weight +
         indeterminism_level * pw.total_uncertainty_practical_weight +
@@ -2684,6 +2902,7 @@ function perceive_uncertainty(
         recent_success_rate=recent_success_rate,
         ai_success_rate=ai_success_rate,
         avg_ai_trust=avg_ai_trust,
+        ai_used=counts_as_ai_use(env.config, ai_level),
         return_evidence=return_evidence,
         risk_tolerance=risk_tolerance,
         hallucination_rate=hallucination_rate,

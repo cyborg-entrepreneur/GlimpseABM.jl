@@ -5,14 +5,14 @@ using GlimpseABM: MarketConditions
 
 """
 Build a `MarketConditions` for tests with sensible defaults. Overrides via
-kwargs. Replaces the ad-hoc `Dict{String,Any}(...)`
+kwargs. Introduced in v3.0 to replace the ad-hoc `Dict{String,Any}(...)`
 test constructions that were drifting away from the production schema.
 """
 function test_market_conditions(; regime::String="normal",
                                   volatility::Float64=0.2,
                                   round::Int=0,
                                   uncertainty_state::Dict{String,Any}=Dict{String,Any}(),
-                                 )
+                                )
     return MarketConditions(
         regime,
         volatility,
@@ -27,5 +27,5 @@ function test_market_conditions(; regime::String="normal",
         0.0,                                    # avg_competition
         uncertainty_state,
         Dict{String,Any}(),                     # extras
-    )
+   )
 end

@@ -1,9 +1,9 @@
 """
-Shared launch-metadata and run-provenance helpers for the experiment scripts.
+Shared launch metadata helpers for manuscript-facing experiment scripts.
 
-The simulation uses `premium` as the stable internal tier key. Output tables
-expose `frontier_ai` as the display label so presentation can change without
-touching runtime model wiring.
+The simulation still uses `premium` as the stable internal tier key. Output
+tables expose `frontier_ai` as the manuscript-facing label so we can change
+presentation without risking runtime model wiring.
 """
 
 const AI_TIER_DISPLAY_LABELS = Dict(
@@ -42,18 +42,18 @@ function write_run_provenance!(
     push!(
         rows,
         "tier_label_semantics" =>
-            "Internal key premium is displayed as frontier_ai in output columns.",
-    )
+            "Internal key premium is displayed as frontier_ai in manuscript-facing columns.",
+   )
     push!(
         rows,
         "emergent_metric_semantics" =>
             "emergent_* aliases summarize all assigned agents; survivor_emergent_* columns report survivor-only values.",
-    )
+   )
     push!(
         rows,
         "observation_count_semantics" =>
             "*_observations columns report evidence counts behind emergent uncertainty diagnostics.",
-    )
+   )
     for (key, value) in sort(collect(parameters); by=x -> string(x[1]))
         push!(rows, string(key) => string(value))
     end

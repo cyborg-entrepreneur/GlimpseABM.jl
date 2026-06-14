@@ -16,7 +16,7 @@ function derivative_investment_outcome(tier::String, seed::Int)::Bool
         primary_sector="tech",
         fixed_ai_level=tier,
         rng=MersenneTwister(seed),
-    )
+   )
     opp = Opportunity(
         id="same_market_opportunity",
         latent_return_potential=1.4,
@@ -30,7 +30,7 @@ function derivative_investment_outcome(tier::String, seed::Int)::Bool
         capital_requirements=10_000.0,
         config=config,
         rng=MersenneTwister(900 + seed),
-    )
+   )
     outcome = GlimpseABM.execute_action!(
         agent,
         "invest",
@@ -38,7 +38,7 @@ function derivative_investment_outcome(tier::String, seed::Int)::Bool
         1;
         opportunity=opp,
         estimated_return=1.2,
-    )
+   )
     @test outcome["success"] === true
     return Bool(outcome["invested_derivative"])
 end
@@ -54,7 +54,7 @@ function perceived_novelty_with_derivative_rate(derivative_rate::Float64)::Float
         "new_possibility_rate" => 0.10,
         "adoption_rate" => 0.20,
         "derivative_adoption_rate" => 0.20,
-    )
+   )
     env.agentic_novelty_state["novelty_level"] = 0.55
     env.agentic_novelty_state["new_possibility_rate"] = 0.10
     env.agentic_novelty_state["new_possibilities"] = 3
@@ -68,7 +68,7 @@ function perceived_novelty_with_derivative_rate(derivative_rate::Float64)::Float
         "new_possibility_rate" => Dict("none" => 0.10),
         "adoption_rate" => Dict("none" => derivative_rate),
         "derivative_adoption_rate" => Dict("none" => derivative_rate),
-    )
+   )
 
     traits = Dict(
         "competence" => 0.5,
@@ -78,7 +78,7 @@ function perceived_novelty_with_derivative_rate(derivative_rate::Float64)::Float
         "uncertainty_tolerance" => 0.5,
         "analytical_ability" => 0.5,
         "risk_tolerance" => 0.5,
-    )
+   )
 
     perception = GlimpseABM.perceive_uncertainty(
         env,
@@ -87,7 +87,7 @@ function perceived_novelty_with_derivative_rate(derivative_rate::Float64)::Float
         test_market_conditions(volatility=0.1, round=1);
         ai_level="none",
         agent_id=1,
-    )
+   )
     return perception.agentic_novelty.level
 end
 
@@ -95,7 +95,7 @@ end
     mismatches = count(
         seed -> derivative_investment_outcome("none", seed) != derivative_investment_outcome("premium", seed),
         1:100,
-    )
+   )
     @test mismatches == 0
 end
 

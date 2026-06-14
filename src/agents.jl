@@ -336,7 +336,7 @@ end
 """
 Tracks confidence calibration against realized outcomes.
 
-`weighted_gap` is the rolling, AI-weighted diagnostic, while the
+`weighted_gap` preserves the old rolling, AI-weighted diagnostic, but the
 additional sums are raw observation-level telemetry so downstream analysis can
 separate sign, action channel, AI usage, and realized-return distributions.
 """
@@ -584,7 +584,7 @@ function EmergentAgent(
 end
 
 function _sample_action_biases(config::EmergentConfig, rng::AbstractRNG)::Dict{String,Float64}
-    sigma = max(0.0, Float64(getfield_default(config, :ACTION_BIAS_SIGMA, 0.0)))
+    sigma = max(0.0, Float64(getfield_default(config, :ACTION_BIAS_SIGMA, 0.05)))
     actions = ("invest", "innovate", "explore", "maintain")
     biases = Dict{String,Float64}()
     for action in actions
@@ -638,6 +638,28 @@ function set_capital!(agent::EmergentAgent, value::Float64)
 end
 
 """
+Release a dead agent's in-flight capital from opportunity capacity tracking.
+
+`opp.total_invested` must reflect current outstanding capital (the invariant
+maintained at maturity in `process_matured_investments!`). Without this
+release, capital deployed by an agent who dies before maturity stays in
+`total_invested` forever, inflating capacity saturation — and therefore the
+convex crowding penalty on every future investor — on precisely the
+opportunities where agents died. The investment records are kept (telemetry
+reads portfolio size at death) but marked so the release cannot double-fire.
+"""
+function _release_inflight_capital_at_death!(agent::EmergentAgent)
+    for investment in agent.active_investments
+        get(investment, "capital_released_at_death", false) && continue
+        opp = get(investment, "opportunity", nothing)
+        if !isnothing(opp) && hasfield(typeof(opp), :total_invested)
+            opp.total_invested = max(0.0, opp.total_invested - Float64(investment["amount"]))
+        end
+        investment["capital_released_at_death"] = true
+    end
+end
+
+"""
 Check if agent is alive and above survival threshold.
 Uses sector-specific survival thresholds calibrated from BLS/Fed data.
 """
@@ -659,7 +681,7 @@ function check_survival!(agent::EmergentAgent, round::Int)::Bool
     # cash + in-flight) instead of gating purely on cash-on-hand. Separates
     # genuine insolvency from illiquidity.
     effective_capital = agent.resources.capital
-    if getfield_default(agent.config, :SURVIVAL_COUNTS_INFLIGHT, false)
+    if getfield_default(agent.config, :SURVIVAL_COUNTS_INFLIGHT, true)
         in_flight = sum(inv["amount"] for inv in agent.active_investments; init=0.0)
         effective_capital += in_flight
     end
@@ -670,6 +692,7 @@ function check_survival!(agent::EmergentAgent, round::Int)::Bool
             agent.alive = false
             agent.failure_round = round  # Track when agent fails (for Kaplan-Meier)
             agent.failure_reason = "liquidity_failure"  # Failed due to insufficient capital
+            _release_inflight_capital_at_death!(agent)
             return false
         end
     else
@@ -692,6 +715,7 @@ function check_survival!(agent::EmergentAgent, round::Int)::Bool
             agent.alive = false
             agent.failure_round = round
             agent.failure_reason = "equity_failure"
+            _release_inflight_capital_at_death!(agent)
             return false
         end
     else
@@ -949,6 +973,12 @@ function execute_action!(
     round::Int;
     opportunity::Union{Opportunity,Nothing} = nothing,
     estimated_return::Union{Float64,Nothing} = nothing,
+    # (design note): the RAW instrument estimate
+    # (Information.estimated_return) alongside the decision-basis
+    # estimated_return, which may be strategy-shaded under S1. Accuracy and
+    # learning consumers judge the instrument against THIS value; sizing and
+    # scoring keep using the (possibly shaded) decision value.
+    instrument_estimated_return::Union{Float64,Nothing} = nothing,
     ai_info::Union{Information,Nothing} = nothing,
     innovation_engine::Union{InnovationEngine,Nothing} = nothing,
     market_conditions::Union{MarketConditions,Nothing} = nothing,
@@ -956,7 +986,12 @@ function execute_action!(
     # confidence and signal_score flow from the decision layer (perception +
     # evaluate_portfolio_opportunities) into invest sizing.
     confidence::Union{Float64,Nothing} = nothing,
-    signal_score::Union{Float64,Nothing} = nothing
+    signal_score::Union{Float64,Nothing} = nothing,
+    # A2 directed creation (open-action extension): the agent's perceived
+    # sector density, computed in make_decision! from its visible set only
+    # when ENABLE_DIRECTED_CREATION is on; `nothing` (default) leaves
+    # innovation sector selection on the reactive deterministic path.
+    sector_density::Union{Dict{String,Float64},Nothing} = nothing
 )::Dict{String,Any}
     raw_ai_level = get_ai_level(agent)
     behavior_tier = behavior_ai_level(agent.config, raw_ai_level)
@@ -972,14 +1007,17 @@ function execute_action!(
 
     if action == "invest" && !isnothing(opportunity)
         outcome = _execute_invest!(agent, opportunity, market, round, outcome;
-            estimated_return=estimated_return, ai_info=ai_info,
+            estimated_return=estimated_return,
+            instrument_estimated_return=instrument_estimated_return,
+            ai_info=ai_info,
             uncertainty_perception=uncertainty_perception,
             confidence=confidence, signal_score=signal_score)
     elseif action == "innovate"
         outcome = _execute_innovate!(agent, market, round, outcome;
             innovation_engine=innovation_engine,
             market_conditions=market_conditions,
-            uncertainty_perception=uncertainty_perception)
+            uncertainty_perception=uncertainty_perception,
+            sector_density=sector_density)
     elseif action == "explore"
         outcome = _execute_explore!(agent, market, round, outcome)
     else  # maintain
@@ -1031,7 +1069,7 @@ function record_recent_outcome!(
         "ai_used" => Bool(get(outcome, "ai_used", false)),
     )
 
-    amount = _outcome_float(outcome, ("investment_amount", "amount", "rd_spend", "explore_cost", "cost"))
+    amount = _outcome_float(outcome, ("investment_amount", "amount", "rd_spend", "explore_cost"))
     if !isnothing(amount)
         recent["amount"] = amount
         if action_name == "invest"
@@ -1055,6 +1093,12 @@ function record_recent_outcome!(
         end
     end
 
+    # F2d: forward the censored-salvage marker (pivot records) so analysis can
+    # split policy-determined recovery multiples from market-determined ones.
+    if haskey(outcome, "censored_salvage")
+        recent["censored_salvage"] = Bool(outcome["censored_salvage"])
+    end
+
     push!(agent.recent_outcomes, recent)
     max_history = max(1, Int(getfield_default(agent.config, :RECENT_OUTCOME_MEMORY, 24)))
     while length(agent.recent_outcomes) > max_history
@@ -1071,6 +1115,11 @@ function _execute_invest!(
     round::Int,
     outcome::Dict{String,Any};
     estimated_return::Union{Float64,Nothing} = nothing,
+    # F1: raw Information.estimated_return at decision time (see
+    # execute_action!). Falls back to the decision-basis estimate when not
+    # provided (legacy/test callers and the no-S1 case, where the two
+    # coincide).
+    instrument_estimated_return::Union{Float64,Nothing} = nothing,
     ai_info::Union{Information,Nothing} = nothing,
     uncertainty_perception::Union{Perception,Nothing} = nothing,
     # confidence and signal_score scale the dollar amount so that agents who
@@ -1159,6 +1208,14 @@ function _execute_invest!(
     # 1.0 (break-even, "no expected premium") rather than leaking the hidden
     # ground truth opportunity.latent_return_potential into the recorded outcome.
     est_ret = isnothing(estimated_return) ? 1.0 : estimated_return
+    # F1 raw/decision split: "estimated_return" is the DECISION basis (S1 may
+    # have shaded it); "instrument_estimated_return" is what the instrument
+    # actually said (Information.estimated_return). Forecast-accuracy and
+    # learning consumers must judge the instrument against the raw value —
+    # judging it against its own strategy-shaded transform manufactures
+    # forecast error the instrument never made.
+    instrument_est_ret = isnothing(instrument_estimated_return) ? est_ret :
+        instrument_estimated_return
     ai_tier = get_ai_level(agent)
     behavior_tier = behavior_ai_level(agent.config, ai_tier)
 
@@ -1176,6 +1233,7 @@ function _execute_invest!(
         "ai_level" => behavior_tier,
         "ai_label" => ai_tier,
         "estimated_return" => est_ret,
+        "instrument_estimated_return" => instrument_est_ret,
         "competition_at_entry" => hasfield(typeof(opportunity), :competition) ? opportunity.competition : 0.0,
         "capacity_saturation_at_entry" => capacity_saturation_at_entry,
         "sector" => opportunity.sector,
@@ -1189,6 +1247,15 @@ function _execute_invest!(
         # the AI's confidence in its own output.
         "decision_confidence" => isnothing(confidence) ? 0.5 : Float64(confidence),
         "uncertainty_levels_at_decision" => _perception_uncertainty_levels(uncertainty_perception),
+        # Perceived market crowding at commitment (the agent's OWN
+        # decision-time observable, perception.practical_indeterminism.
+        # crowding_pressure). Stored so the A1 pivot review can compare
+        # like-with-like (commitment-time vs current perceived crowding)
+        # without reconstructing past perception. Pure stored telemetry when
+        # ENABLE_PIVOT=false — nothing reads it.
+        "perceived_crowding_at_commitment" => isnothing(uncertainty_perception) ?
+            NaN :
+            clamp(Float64(uncertainty_perception.practical_indeterminism.crowding_pressure), 0.0, 1.0),
     )
     push!(agent.active_investments, investment)
     # Cumulative per-sector investment count (per-tier sector-convergence metric).
@@ -1219,6 +1286,7 @@ function _execute_invest!(
     outcome["competition_at_investment"] = opportunity.competition
     outcome["info_quality_used"] = info_quality
     outcome["estimated_return"] = est_ret
+    outcome["instrument_estimated_return"] = instrument_est_ret
     outcome["ai_behavior_level"] = behavior_tier
     outcome["uncertainty_levels_at_decision"] = get(investment, "uncertainty_levels_at_decision", Dict{String,Float64}())
 
@@ -1251,7 +1319,10 @@ function _execute_innovate!(
     outcome::Dict{String,Any};
     innovation_engine::Union{InnovationEngine,Nothing} = nothing,
     market_conditions::Union{MarketConditions,Nothing} = nothing,
-    uncertainty_perception::Union{Perception,Nothing} = nothing
+    uncertainty_perception::Union{Perception,Nothing} = nothing,
+    # A2 directed creation: forwarded to attempt_innovation! → sector
+    # selection; `nothing` keeps the reactive deterministic mapping.
+    sector_density::Union{Dict{String,Float64},Nothing} = nothing
 )::Dict{String,Any}
     capital = get_capital(agent)
     ai_tier = get_ai_level(agent)
@@ -1302,6 +1373,7 @@ function _execute_innovate!(
             ai_level=behavior_tier,
             uncertainty_perception=uncertainty_perception,
             decision_perception=uncertainty_perception,
+            sector_density=sector_density,
             rng=agent.rng
         )
 
@@ -1461,6 +1533,16 @@ function _execute_innovate!(
 
     record_deployment!(agent.resources.performance, "innovate", rd_spend;
                        ai_level=behavior_tier, round_num=round)
+    # Record the realized cash back (innovation return, or partial R&D recovery
+    # on failure) so innovate ROIC reflects actual performance. Without this,
+    # compute_roic("innovate") is exactly -1.0 forever after the first attempt,
+    # turning the loss-ratio penalty in calculate_innovation_utility into a
+    # permanent step function instead of a learning signal.
+    realized_cash = Float64(get(outcome, "innovation_return", get(outcome, "recovery", 0.0)))
+    if realized_cash > 0
+        record_return!(agent.resources.performance, "innovate", realized_cash;
+                       ai_level=behavior_tier, round_num=round)
+    end
 
     return outcome
 end
@@ -1739,7 +1821,7 @@ function process_matured_investments!(
                 opp.total_invested = max(0.0, opp.total_invested - invested_amount)
             end
 
-            success = ret_multiple >= 1.0
+            success = ret_multiple >= 1.0 + max(0.0, agent.config.INVESTMENT_SUCCESS_ROI_THRESHOLD)
             if success
                 agent.success_count += 1
                 agent.investment_success_count += 1  # channel-specific
@@ -1763,14 +1845,27 @@ function process_matured_investments!(
             record_return!(agent.resources.performance, "invest", capital_returned;
                           ai_level=tier_used, round_num=round)
 
-            # Track emergent uncertainty metrics
-            estimated_return = Float64(get(investment, "estimated_return", ret_multiple))
+            # Track emergent uncertainty metrics. F1 (design note
+            # 2026-06-09): estimation accuracy is judged against the RAW
+            # instrument estimate (instrument_estimated_return; legacy
+            # fallback to the decision-basis estimated_return). When NO
+            # estimate exists at all, the outcome is excluded from
+            # accuracy/disconfirmation scoring — the old `ret_multiple`
+            # fallback scored missing forecasts as perfect, diluting the
+            # channel. NaN makes record_investment_outcome! skip only the
+            # estimation-error push (return/competition tracking is
+            # estimate-independent and still recorded).
+            instrument_estimate = _stored_instrument_estimate(investment)
             record_investment_outcome!(
                 agent.uncertainty_metrics,
-                estimated_return,
+                isnothing(instrument_estimate) ? NaN : instrument_estimate,
                 ret_multiple,
                 crowding_exposure
             )
+            # Decision-basis estimate retained for legacy consumers of the
+            # matured record's "estimated_return" key (sizing semantics).
+            estimated_return = Float64(get(investment, "estimated_return",
+                isnothing(instrument_estimate) ? ret_multiple : instrument_estimate))
 
             invested_tier = tier_used
             matured_outcome = Dict{String,Any}(
@@ -1781,6 +1876,16 @@ function process_matured_investments!(
                 "success" => success,
                 "round_matured" => round,
                 "estimated_return" => estimated_return,
+                # F1 raw/decision split: the RAW instrument estimate (what the
+                # InformationSystem said at decision time) plus an explicit
+                # presence marker. Forecast-accuracy consumers
+                # (_apply_matured_ai_learning!, the ai_accurate gate in
+                # step!) read THIS, never the possibly-S1-shaded
+                # "estimated_return"; when has_return_estimate is false the
+                # outcome is excluded from disconfirmation scoring.
+                "instrument_estimated_return" =>
+                    isnothing(instrument_estimate) ? estimated_return : instrument_estimate,
+                "has_return_estimate" => !isnothing(instrument_estimate),
                 "competition_at_entry" => competition_at_entry,
                 "competition_at_maturity" => competition_at_maturity,
                 "capacity_saturation_at_entry" => capacity_saturation_at_entry,
@@ -1820,6 +1925,315 @@ function process_matured_investments!(
 
     agent.active_investments = remaining_investments
     return matured_outcomes
+end
+
+"""
+Shared observable forecast-disconfirmation scorer + recorder ( (design note)
+2026-06-09). Used by BOTH resolution paths of an investment — maturity
+(`_apply_matured_ai_learning!`, simulation.jl) and pivot
+(`review_and_pivot_investments!`) — so a prediction is scored by exactly one
+rule regardless of how the position closed.
+
+`predicted_return` must be the RAW instrument estimate (F1:
+"instrument_estimated_return", falling back to "estimated_return" for legacy
+records). When it is `nothing` (no estimate was ever stored) the outcome is
+EXCLUDED from disconfirmation exposure recording — scoring a missing forecast
+as if the instrument predicted the realized outcome (the old ret_multiple
+fallback) diluted the channel with manufactured perfect forecasts.
+
+Returns the `observable_ai_disconfirmation` NamedTuple, or `nothing` when the
+outcome was excluded. Recording into the environment is skipped when
+`uncertainty_env === nothing` (direct-call/test paths); the score is still
+returned so agent-side learning can proceed.
+"""
+function _score_and_record_forecast_disconfirmation!(
+    uncertainty_env::Union{KnightianUncertaintyEnvironment,Nothing},
+    agent::EmergentAgent,
+    round_num::Int;
+    ai_tier::String,
+    domain::String,
+    investment_amount::Float64,
+    capital_returned::Float64,
+    predicted_return::Union{Float64,Nothing},
+    ai_confidence::Float64,
+    success::Bool,
+)
+    isnothing(predicted_return) && return nothing
+    config = agent.config
+    ai_assisted = counts_as_ai_use(config, ai_tier)
+    recent_scores = get(agent.ai_learning.accuracy_estimates, domain, Float64[])
+    recent_accuracy = isempty(recent_scores) ? 0.5 :
+        mean(recent_scores[max(1, length(recent_scores) - 4):end])
+    analytical = Float64(get(agent.traits, "analytical_ability", 0.5))
+    disconfirmation = observable_ai_disconfirmation(
+        investment_amount=investment_amount,
+        capital_returned=capital_returned,
+        predicted_return=predicted_return,
+        ai_confidence=ai_confidence,
+        success=success,
+        recent_accuracy=recent_accuracy,
+        analytical_ability=analytical,
+    )
+    if !isnothing(uncertainty_env)
+        record_observable_ai_disconfirmation!(
+            uncertainty_env,
+            round_num,
+            agent.id,
+            behavior_ai_level(config, ai_tier),
+            domain;
+            suspected_ai_failure=disconfirmation.suspected_ai_failure,
+            disconfirmation_score=disconfirmation.disconfirmation_score,
+            severity=disconfirmation.severity,
+            return_error=disconfirmation.return_error,
+            ai_confidence=ai_confidence,
+            accuracy_score=disconfirmation.accuracy_score,
+            success=success,
+            ai_assisted=ai_assisted,
+        )
+    end
+    return disconfirmation
+end
+
+"""
+F1 fallback chain for the instrument's decision-time prediction: the RAW
+instrument estimate when stored, else the decision-basis estimate (legacy
+records predating the raw/decision split — identical unless S1 shaded it),
+else `nothing` (no estimate at all ⇒ caller must EXCLUDE the outcome from
+forecast-accuracy scoring; never fall back to the realized multiple).
+"""
+function _stored_instrument_estimate(record::Dict{String,Any})::Union{Float64,Nothing}
+    raw = get(record, "instrument_estimated_return", nothing)
+    raw isa Number && isfinite(Float64(raw)) && return Float64(raw)
+    legacy = get(record, "estimated_return", nothing)
+    legacy isa Number && isfinite(Float64(legacy)) && return Float64(legacy)
+    return nothing
+end
+
+"""
+A1 open-action pivot review (the design notes
+§Open-action extension). Once per round, an ENABLE_PIVOT agent reviews its
+in-flight investments and liquidates any whose decision-relevant expected
+residual value has fallen below today's recoverable value plus a small
+redeployment margin (exact rule: `pivot_trigger`, open_action.jl). Returns
+`(n_pivots, recovered_total, committed_total, pivoted_opportunity_ids)`.
+
+Call site: make_decision!, FIRST among the decision-economics steps — before
+estimate_operational_costs and ALL action-utility calculations (design note
+F3c, 2026-06-09) — so every utility sees post-pivot capital/portfolio state
+consistently and recovered capital is genuinely redeployable this round.
+The trigger's instrument input is the decision-time-STORED commitment
+estimate (the F1 raw instrument value): a same-round re-query of the
+information cache was an inconsistent privilege, since holdings outside the
+agent's current visible set never had a fresh estimate to read. Simulation
+Phase 2 (process_matured_investments!) has already run this round, so no
+investment reviewed here can simultaneously mature — a position is paid out
+at maturity OR recovered at pivot, never both (investments with
+maturity_round ≤ round are skipped defensively for direct-call/test paths).
+The review consumes no RNG.
+
+A pivot mirrors maturity (design note):
+
+  LEDGER          recovered = committed × haircut(progress) credited to
+                  capital and total_returned; record_return! books it into
+                  the invest channel; compile_round_stats folds pivot
+                  recoveries into capital_returned["invest"].
+  DISCONFIRMATION an observable forecast-disconfirmation exposure is
+                  recorded against the commitment-time INSTRUMENT estimate
+                  (raw, F1 fallback chain) with recovered/amount as the
+                  realization — same scorer as maturity
+                  (_score_and_record_forecast_disconfirmation!).
+  CALIBRATION     record_confidence_outcome_observation! with the stored
+                  decision confidence vs the realized recovery multiple,
+                  mirroring the maturity-path call (simulation.jl Phase 2).
+  TIER EVIDENCE   recovered/amount − 1 enters tier_roi_history[tier] and
+                  update_tier_belief! — the position going bad IS
+                  tier-relevant evidence; the haircut LEVEL is
+                  policy-determined, so the records are flagged
+                  "censored_salvage" => true for analysis splits
+                  (documented tradeoff, approved).
+  BOOLEANS        success_count/failure_count are NOT incremented and the
+                  pivot record is EXCLUDED from recent_success_rate /
+                  ai_success_rate (its cash multiple still enters
+                  return_evidence): a censored salvage is neither a success
+                  nor a maturity-grade failure in the Boolean channels.
+
+Capital conservation mirrors maturity/death: the opportunity's
+total_invested is reduced by the committed amount exactly once (the record is
+marked with the same "capital_released_at_death" flag
+_release_inflight_capital_at_death! checks, so a later death can never
+double-release, and the record is removed from active_investments so maturity
+processing can never double-pay).
+
+When ENABLE_PIVOT=false this returns before ANY computation (bit-identical
+default, pinned by test_open_action_space.jl and the open-action debug
+counter). Config validation happens at initialize!
+(validate_open_action_config); the previous per-agent-per-round re-validation
+was removed as hot-path hygiene (design note).
+"""
+function review_and_pivot_investments!(
+    agent::EmergentAgent,
+    round::Int,
+    perception::Perception;
+    uncertainty_env::Union{KnightianUncertaintyEnvironment,Nothing} = nothing,
+)::Tuple{Int,Float64,Float64,Set{String}}
+    # Default-off short-circuit BEFORE any other work.
+    agent.config.ENABLE_PIVOT || return (0, 0.0, 0.0, Set{String}())
+    (!agent.alive || isempty(agent.active_investments)) &&
+        return (0, 0.0, 0.0, Set{String}())
+
+    crowding_now = clamp(
+        Float64(perception.practical_indeterminism.crowding_pressure), 0.0, 1.0)
+
+    n_pivots = 0
+    recovered_total = 0.0
+    committed_total = 0.0
+    pivoted_ids = Set{String}()
+    # Deferred survivor vector (design note): allocated only when the
+    # first pivot actually fires; the overwhelmingly common no-pivot round
+    # allocates nothing.
+    investments = agent.active_investments
+    remaining::Union{Nothing,Vector{Dict{String,Any}}} = nothing
+
+    for idx in eachindex(investments)
+        investment = investments[idx]
+        opp = get(investment, "opportunity", nothing)
+        amount = Float64(get(investment, "amount", 0.0))
+        maturity_round = Int(get(investment, "maturity_round", round))
+        round_invested = Int(get(investment, "round_invested", round))
+        # Never pivot a malformed, already-released, zero-amount, or already-
+        # due investment (due ones belong to maturity processing; in the
+        # production flow Phase 2 has already removed them this round).
+        if isnothing(opp) || amount <= 0.0 || maturity_round <= round ||
+           get(investment, "capital_released_at_death", false)
+            remaining === nothing || push!(remaining, investment)
+            continue
+        end
+
+        time_to_maturity = max(1, maturity_round - round_invested)
+        progress = clamp((round - round_invested) / time_to_maturity, 0.0, 1.0)
+
+        # Commitment-time perceived crowding; legacy/test records without the
+        # stored field measure no deterioration (conservative hold bias).
+        crowding_at_commit = Float64(get(investment,
+            "perceived_crowding_at_commitment", NaN))
+        isfinite(crowding_at_commit) || (crowding_at_commit = crowding_now)
+
+        # Instrument input: the stored commitment-time estimate, RAW per F1
+        # (instrument_estimated_return, falling back to the decision-basis
+        # estimated_return only for legacy records — never to a realized
+        # multiple). The trigger and the disconfirmation exposure below
+        # therefore compare in the same (raw-instrument) space.
+        stored_est = _stored_instrument_estimate(investment)
+        est_multiple = isnothing(stored_est) ? 1.0 : stored_est
+
+        should_pivot, _, recoverable_per_dollar = pivot_trigger(
+            agent.config;
+            progress=progress,
+            crowding_now=crowding_now,
+            crowding_at_commit=crowding_at_commit,
+            decision_confidence=Float64(get(investment, "decision_confidence", 0.5)),
+            est_multiple=est_multiple,
+        )
+        if !should_pivot
+            remaining === nothing || push!(remaining, investment)
+            continue
+        end
+        if remaining === nothing
+            # First pivot this round: snapshot the survivors seen so far.
+            remaining = investments[1:idx-1]
+        end
+
+        # ── Execute the pivot (capital conservation mirrors maturity/death) ──
+        recovered = amount * recoverable_per_dollar
+        recovery_multiple = recovered / amount
+        set_capital!(agent, get_capital(agent) + recovered)
+        agent.total_returned += recovered
+
+        # Release the committed capital from opportunity capacity tracking
+        # exactly once; the A5 death-release marker makes the release
+        # idempotent against any later death-path scan of a stale reference.
+        if hasfield(typeof(opp), :total_invested)
+            opp.total_invested = max(0.0, opp.total_invested - amount)
+        end
+        investment["capital_released_at_death"] = true
+        investment["pivoted"] = true
+        investment["pivot_round"] = round
+        # Tier-evidence flag (F2d): the haircut level is policy-determined,
+        # so every record carrying pivot evidence is marked for analysis
+        # splits.
+        investment["censored_salvage"] = true
+        opp_id = String(get(investment, "opportunity_id", opp.id))
+        push!(pivoted_ids, opp_id)
+
+        invested_label = String(get(investment, "ai_label",
+            get(investment, "ai_level", get_ai_level(agent))))
+        tier_used = behavior_ai_level(agent.config,
+            String(get(investment, "ai_level", invested_label)))
+        record_return!(agent.resources.performance, "invest", recovered;
+                       ai_level=tier_used, round_num=round)
+
+        # F2b DISCONFIRMATION: the commitment-time instrument estimate is
+        # scored against the realized recovery, mirroring maturity. A record
+        # with no stored estimate is excluded (stored_est === nothing), per
+        # the F1 no-estimate rule.
+        _score_and_record_forecast_disconfirmation!(
+            uncertainty_env, agent, round;
+            ai_tier=invested_label,
+            domain=String(get(investment, "ai_analysis_domain", "market_analysis")),
+            investment_amount=amount,
+            capital_returned=recovered,
+            predicted_return=stored_est,
+            ai_confidence=Float64(get(investment, "ai_confidence", 0.5)),
+            success=false,
+        )
+
+        # F2c CALIBRATION: mirror the maturity-path confidence-outcome
+        # observation (simulation.jl Phase 2; channel="investment" because a
+        # pivot resolves an investment).
+        record_confidence_outcome_observation!(
+            agent,
+            Float64(get(investment, "decision_confidence", 0.5)),
+            recovery_multiple;
+            ai_used=counts_as_ai_use(agent.config, invested_label),
+            channel="investment")
+
+        # F2d TIER EVIDENCE: the realized recovery multiple updates the tier
+        # that made the investment, mirroring maturity (the position going
+        # bad is tier-relevant evidence; the haircut level is policy, hence
+        # the censored_salvage flag on the records).
+        if haskey(agent.ai_learning.tier_roi_history, tier_used)
+            push!(agent.ai_learning.tier_roi_history[tier_used],
+                  recovery_multiple - 1.0)
+            while length(agent.ai_learning.tier_roi_history[tier_used]) > 12
+                popfirst!(agent.ai_learning.tier_roi_history[tier_used])
+            end
+        end
+        update_tier_belief!(agent.ai_learning, tier_used, recovery_multiple)
+
+        # Honest learning record: a pivot realizes recovered/amount < 1. The
+        # success=false Boolean is recorded but EXCLUDED from the recent/ai
+        # success-rate channels (F2e, _recent_outcome_experience_stats); the
+        # cash multiple still feeds return_evidence.
+        # agent.success_count/failure_count are deliberately NOT incremented —
+        # those counters stay maturity-only.
+        record_recent_outcome!(agent, Dict{String,Any}(
+            "action" => "pivot",
+            "success" => false,
+            "ai_used" => counts_as_ai_use(agent.config, invested_label),
+            "amount" => amount,
+            "capital_returned" => recovered,
+            "censored_salvage" => true,
+        ); action="pivot")
+
+        n_pivots += 1
+        recovered_total += recovered
+        committed_total += amount
+    end
+
+    if remaining !== nothing
+        agent.active_investments = remaining
+    end
+    return (n_pivots, recovered_total, committed_total, pivoted_ids)
 end
 
 """
@@ -1915,7 +2329,7 @@ end
 Estimate AI cost for a given level and expected calls.
 """
 function _ai_cost_model(config::EmergentConfig)::String
-    model = lowercase(strip(String(getfield_default(config, :AI_COST_MODEL, "fixed"))))
+    model = lowercase(strip(String(getfield_default(config, :AI_COST_MODEL, "hybrid"))))
     return model in ("hybrid", "token") ? model : "fixed"
 end
 
@@ -2477,7 +2891,8 @@ model combines:
 function choose_ai_level(
     agent::EmergentAgent;
     neighbor_signals::Dict{String,Any} = Dict{String,Any}(),
-    current_round::Int = 0
+    current_round::Int = 0,
+    visible_opportunities::Float64 = NaN
 )::String
     # If fixed AI level, return it
     if !isnothing(agent.fixed_ai_level)
@@ -2556,6 +2971,35 @@ function choose_ai_level(
     operating_cost = max(raw_burn, 1.0)
     recent_activity = max(1.0, Float64(get(metrics, "recent_ai_activity", 1.0)))
 
+    # ── Usage planning: price the action mix the agent ACTUALLY executes ──
+    # Billing charges "market_analysis" once per visible opportunity per round
+    # (the round-scoped info cache dedupes calculate_investment_utility and
+    # evaluate_portfolio_opportunities to one charge per opportunity), plus
+    # task charges on innovate ("innovation_potential") and explore
+    # ("exploration"). Posted prices are not Knightian uncertainty: an agent
+    # may misjudge returns, but a planner that misreads the published price
+    # sheet is mispricing, not bounded rationality. A misconfigured planner that priced ≤4
+    # cheap "tier_review" calls and underestimated frontier usage cost by an
+    # order of magnitude, systematically biasing emergent tier adoption
+    # toward expensive tiers.
+    #
+    # Visibility is tier-dependent (info_breadth), so each candidate tier's
+    # expected analysis volume is the agent's observed visible count scaled by
+    # the published breadth ratio — knowable product information, like price.
+    effective_current = behavior_ai_level(agent.config, agent.current_ai_level)
+    current_cfg = get(agent.config.AI_LEVELS, effective_current,
+                      get(agent.config.AI_LEVELS, "none", nothing))
+    current_breadth = isnothing(current_cfg) ? 0.2 : max(Float64(current_cfg.info_breadth), 0.05)
+    visible_now = isfinite(visible_opportunities) ?
+        max(visible_opportunities, 1.0) : recent_activity
+
+    # Recent action mix over roughly one review window: how often does this
+    # agent actually run innovate/explore tasks per round?
+    mix_window = agent.action_history[max(1, end - 11):end]
+    n_mix = max(length(mix_window), 1)
+    share_innovate = count(==("innovate"), mix_window) / n_mix
+    share_explore = count(==("explore"), mix_window) / n_mix
+
     cost_ratios = Dict{String,Float64}()
 
     for tier in order
@@ -2569,10 +3013,24 @@ function choose_ai_level(
             continue
         end
         base_cost = _ai_subscription_cost(agent, cfg)
+        # Expected per-round analysis volume at THIS tier's visibility.
+        breadth_ratio = max(Float64(cfg.info_breadth), 0.05) / current_breadth
+        v_est = clamp(visible_now * breadth_ratio, 1.0, 400.0)
         call_cost = ai_analysis_call_cost(agent, tier;
-            expected_calls=recent_activity,
-            action="tier_review",
+            expected_calls=v_est,
+            action="market_analysis",
+            n_candidates=v_est,
         )
+        if share_innovate > 0.0
+            call_cost += share_innovate * ai_analysis_call_cost(agent, tier;
+                action="innovation_potential")
+        end
+        if share_explore > 0.0
+            call_cost += share_explore * ai_analysis_call_cost(agent, tier;
+                action="exploration",
+                n_candidates=v_est,
+            )
+        end
 
         total_cost = if cfg.cost_type == "subscription"
             # Match actual billing (start_subscription_schedule!): a subscription
@@ -2769,6 +3227,20 @@ function calculate_investment_utility(
     # active cost backend, so this loop deducts AI analysis cost the same way
     # evaluate_portfolio_opportunities does — otherwise utility evaluation would
     # give some tiers free AI while ranking charged for it.
+    # AGI strategy ladder gate (the design notes).
+    # Computed ONCE per call; when inactive (reactive default, or this tier
+    # outside STRATEGY_TIERS) every hook below short-circuits before any
+    # strategy computation, leaving the reactive path bit-identical.
+    ladder_active = strategy_active(agent.config, effective_ai_level)
+    # G1 two-pass S2: per-opportunity edges + the choice-set mean computed
+    # ONCE over the full candidate pool (strategy_edge_context,
+    # src/strategy.jl); the per-candidate multiplier below is then a
+    # dictionary lookup centered on that mean (mean multiplier ≡ 1 per
+    # choice set — re-ranking signal only, no level confound).
+    ladder_edges = ladder_active ?
+        strategy_edge_context(agent.config, agent.resources.knowledge,
+                              opportunities) : nothing
+
     max_score = 0.0
     for opp in opportunities
         # Propagate the visible Information fields (est_return, est_uncertainty,
@@ -2781,6 +3253,7 @@ function calculate_investment_utility(
         est_return = 1.0
         est_uncertainty = nothing
         conf = nothing
+        strategy_info::Union{Information,Nothing} = nothing
         if !isnothing(info_system)
             # Only deduct per-use cost on cache MISS. Re-reading a cached info
             # object is not a new API call — the agent already paid for it.
@@ -2802,9 +3275,21 @@ function calculate_investment_utility(
             est_return = info.estimated_return
             est_uncertainty = info.estimated_uncertainty
             conf = info.confidence
+            strategy_info = info
             # The agent does not read the hidden contains_hallucination flag.
             # Reliability enters only through the visible estimate, uncertainty,
             # confidence, and the eventual matured outcomes.
+        end
+
+        # S1 hook (AGI strategy ladder): anticipatory congestion shade on the
+        # expected return BEFORE scoring — the strategist discounts what every
+        # rival's instrument also ranks highly, instead of only reacting to the
+        # recursion penalty after the fact. The reactive 0.25 recursion penalty
+        # below stays untouched (S1 adds the anticipatory component; the
+        # design doc forbids double-counting via a retuned coefficient).
+        if ladder_active
+            est_return = strategy_shaded_return(
+                agent.config, est_return, strategy_info, perception)
         end
 
         base_score = evaluate_opportunity_basic(agent, opp, market_conditions;
@@ -2812,6 +3297,15 @@ function calculate_investment_utility(
                                                 estimated_uncertainty=est_uncertainty,
                                                 confidence=conf,
                                                 ai_level=effective_ai_level)
+
+        # S2/S3b hook (AGI strategy ladder): private-edge re-weighting and
+        # low-confidence penalty softening, mirrored at the ranking site in
+        # evaluate_portfolio_opportunities so the invest-vs-not utility and the
+        # chosen opportunity move together.
+        if ladder_active
+            base_score *= strategy_score_multiplier(
+                agent.config, ladder_edges, opp, strategy_info, perception)
+        end
 
         max_score = max(max_score, base_score)
     end
@@ -2900,7 +3394,12 @@ function calculate_innovation_utility(
     agent::EmergentAgent,
     market_conditions::MarketConditions,
     perception::Perception;
-    ai_level::String = "none"
+    ai_level::String = "none",
+    # AGI strategy ladder S3a shift (the design notes),
+    # computed by the caller (make_decision!) from the agent's own information
+    # cache. Default 0.0 = reactive; applied behind a != 0.0 gate below so the
+    # reactive path performs the identical FP operations.
+    strategy_shift::Float64 = 0.0
 )::Float64
     base_drive = get(agent.traits, "innovativeness", 0.5) * 0.5 + 0.05
 
@@ -2938,6 +3437,14 @@ function calculate_innovation_utility(
         0.15 * avoidance
     )
 
+    # S3a (AGI strategy ladder): complement-seeking shift toward creative
+    # action when shared signals dominate and the agent's own instrument is
+    # unsure about much of the visible set. Gated (not an unconditional +0.0)
+    # to keep the reactive path bit-identical.
+    if strategy_shift != 0.0
+        raw_score += strategy_shift
+    end
+
     return clamp(stable_sigmoid(raw_score - 0.6), 0.02, 0.98)
 end
 
@@ -2947,7 +3454,9 @@ Calculate exploration utility.
 function calculate_exploration_utility(
     agent::EmergentAgent,
     perception::Perception;
-    ai_level::String = "none"
+    ai_level::String = "none",
+    # AGI strategy ladder S3a shift — see calculate_innovation_utility.
+    strategy_shift::Float64 = 0.0
 )::Float64
     base_tendency = get(agent.traits, "exploration_tendency", 0.3)
 
@@ -2979,8 +3488,18 @@ function calculate_exploration_utility(
     recursion_penalty = max(0.0, recursive_pressure - 0.5) * 0.2
     # No tier-specific modification - let behavior emerge naturally
 
-    explore_roic = compute_roic(agent.resources.performance, "explore")
-    momentum_bonus = clamp(explore_roic, -0.5, 0.5) * 0.2
+    # Exploration momentum from the agent's recent discovery rate vs. the
+    # configured baseline. Exploration returns knowledge rather than cash, so
+    # cash ROIC is structurally -1.0 here and would pin this term at a constant
+    # penalty rather than a momentum signal.
+    explore_events = [o for o in agent.recent_outcomes if get(o, "action", "") == "explore"]
+    momentum_bonus = if isempty(explore_events)
+        0.0
+    else
+        recent_discovery_rate = count(o -> get(o, "success", false), explore_events) /
+            length(explore_events)
+        clamp(recent_discovery_rate - agent.config.DISCOVERY_PROBABILITY, -0.5, 0.5) * 0.2
+    end
 
     risk_tolerance = Float64(get(agent.traits, "uncertainty_tolerance", 0.5))
     avoidance = 1.0 - risk_tolerance
@@ -3004,6 +3523,12 @@ function calculate_exploration_utility(
         0.18 * recursive_pressure -
         recent_explore_penalty
     )
+
+    # S3a (AGI strategy ladder): complement-seeking shift toward exploration
+    # of oracle-blind territory. Gated to keep the reactive path bit-identical.
+    if strategy_shift != 0.0
+        raw_score += strategy_shift
+    end
 
     return clamp(stable_sigmoid(raw_score - 0.45), 0.05, 0.95)
 end
@@ -3294,6 +3819,19 @@ function evaluate_portfolio_opportunities(
     info_quality_boosts = getfield_default(agent.config, :AI_INFORMATION_QUALITY_BOOSTS, Dict{String,Float64}())
     info_quality_eval = clamp(info_quality_eval + Float64(get(info_quality_boosts, effective_ai_level, 0.0)), 0.0, 0.99)
 
+    # AGI strategy ladder gate (the design notes): when
+    # inactive the hooks below short-circuit before any strategy computation
+    # (bit-identical reactive requirement). Hooked HERE (the ranking loop) so
+    # the CHOSEN opportunity changes under S1/S2/S3, not just the
+    # invest-vs-not utility.
+    ladder_active = strategy_active(agent.config, effective_ai_level)
+    # G1 two-pass S2 (mirrors calculate_investment_utility): edges + the
+    # choice-set mean over the FULL ranked pool, computed once; the multiplier
+    # below centers each candidate on that mean (mean multiplier ≡ 1).
+    ladder_edges = ladder_active ?
+        strategy_edge_context(agent.config, agent.resources.knowledge,
+                              opp_pool) : nothing
+
     for opp in opp_pool
         # estimated_returns is populated for every opp earlier in this function;
         # the neutral 1.0 (break-even) fallback only fires if the dict somehow
@@ -3306,10 +3844,21 @@ function evaluate_portfolio_opportunities(
         # from visible signal quality and matured disconfirmation.
         est_unc = nothing
         conf = nothing
+        strategy_info::Union{Information,Nothing} = nothing
         if haskey(info_cache_local, opp.id)
             inf = info_cache_local[opp.id]
             est_unc = inf.estimated_uncertainty
             conf = inf.confidence
+            strategy_info = inf
+        end
+        # S1 hook (AGI strategy ladder): shade the decision-time expected
+        # return BEFORE scoring. Applied to `est_return` itself (not as a
+        # post-multiplier) so the shaded value flows through the full scoring
+        # pipeline AND into the OpportunityEvaluation record — the agent's
+        # strategy-adjusted belief is also what sizes the commitment.
+        if ladder_active
+            est_return = strategy_shaded_return(
+                agent.config, est_return, strategy_info, perception)
         end
         base_score = evaluate_opportunity_basic(agent, opp, market_conditions;
                                                 estimated_return=est_return,
@@ -3326,6 +3875,13 @@ function evaluate_portfolio_opportunities(
             perception,
             signal_count
         )
+        # S2/S3b hook (AGI strategy ladder): private-edge re-ranking and
+        # low-confidence penalty softening — changes WHICH opportunity tops
+        # the sort, mirroring the calculate_investment_utility hook.
+        if ladder_active
+            final_score *= strategy_score_multiplier(
+                agent.config, ladder_edges, opp, strategy_info, perception)
+        end
 
         inf = get(info_cache_local, opp.id, nothing)
         eval_record = OpportunityEvaluation(;
@@ -3386,8 +3942,13 @@ function make_decision!(
         agent.fixed_ai_level
     else
         neighbor_signals = collect_neighbor_signals(agent, neighbor_agents)
-        # current_round drives the sticky re-evaluation gating in choose_ai_level
-        choose_ai_level(agent; neighbor_signals=neighbor_signals, current_round=round_num)
+        # current_round drives the sticky re-evaluation gating in choose_ai_level.
+        # visible_opportunities feeds the usage-cost planner: billing charges
+        # market_analysis per visible opportunity per round, so the planner
+        # needs the agent's actual visibility to price candidate tiers.
+        choose_ai_level(agent; neighbor_signals=neighbor_signals,
+                        current_round=round_num,
+                        visible_opportunities=Float64(length(opportunities)))
     end
     decision_ai_level = behavior_ai_level(agent.config, ai_level)
 
@@ -3413,6 +3974,21 @@ function make_decision!(
         # Test/diagnostic fallback. See empty_perception in models.jl.
         empty_perception()
     end
+    # A1 open-action pivot review (the design notes).
+    # Sited FIRST among the decision-economics steps ( (design note)
+    # 2026-06-09) — BEFORE estimate_operational_costs and ALL action-utility
+    # calculations — so every utility sees post-pivot capital and portfolio
+    # state consistently (previously invest utility saw pre-pivot state while
+    # the later steps saw post-pivot state). The trigger reads the
+    # decision-time-STORED commitment estimates (the F1 instrument value), not
+    # this round's information cache: a same-round re-query was an
+    # inconsistent privilege anyway, since holdings outside the visible set
+    # never had one. ENABLE_PIVOT=false returns before any computation
+    # (bit-identical default). The pivoted ids are excluded from this round's
+    # invest commitment below (no pivot→re-enter haircut churn).
+    pivot_count, pivot_recovered, pivot_committed, pivoted_opportunity_ids =
+        review_and_pivot_investments!(agent, round_num, perception;
+                                      uncertainty_env=uncertainty_env)
     decision_experience_stats = _recent_outcome_experience_stats(agent.recent_outcomes)
 
     # Calculate utilities for each action. estimate_operational_costs gives a
@@ -3428,8 +4004,25 @@ function make_decision!(
     capital_before_decision_analysis = get_capital(agent)
     invest_utility = calculate_investment_utility(agent, opportunities, market_conditions, perception; ai_level=decision_ai_level, info_system=info_system)
     decision_ai_analysis_cost = max(0.0, capital_before_decision_analysis - get_capital(agent))
-    innovate_utility = calculate_innovation_utility(agent, market_conditions, perception; ai_level=decision_ai_level)
-    explore_utility = calculate_exploration_utility(agent, perception; ai_level=decision_ai_level)
+    # S3a hook (AGI strategy ladder, the design notes):
+    # complement-seeking explore/innovate shift, computed AFTER
+    # calculate_investment_utility so the agent's own Information objects for
+    # this round's visible set are already in the cache (re-reading paid-for
+    # information: no new charge, no RNG). Reactive mode short-circuits to 0.0
+    # before any strategy computation (bit-identical default).
+    strategy_action_shift = strategy_active(agent.config, decision_ai_level) ?
+        strategy_complement_action_shift(
+            agent.config, opportunities, info_system, decision_ai_level,
+            agent.id, perception) :
+        0.0
+    # A2 directed creation: the agent's seat-level perceived sector density,
+    # computed from its visible set only when the channel is enabled (the
+    # disabled path performs no computation and threads `nothing`, leaving the
+    # innovation path bit-identical).
+    sector_density = agent.config.ENABLE_DIRECTED_CREATION ?
+        perceived_sector_density(opportunities) : nothing
+    innovate_utility = calculate_innovation_utility(agent, market_conditions, perception; ai_level=decision_ai_level, strategy_shift=strategy_action_shift)
+    explore_utility = calculate_exploration_utility(agent, perception; ai_level=decision_ai_level, strategy_shift=strategy_action_shift)
     maintain_utility = calculate_maintain_utility(agent, market_conditions, perception; estimated_cost=estimated_cost)
 
     # Select action
@@ -3463,8 +4056,36 @@ function make_decision!(
         noisy_utilities[action] = max(0.0, util + noise)
     end
 
-    # Softmax selection
+    # With no visible opportunities, investing is impossible — remove it from
+    # the choice set entirely. Merely zeroing the utility leaves softmax weight
+    # exp(0/T) on "invest", and the sampled-but-impossible action would execute
+    # maintain semantics while being recorded as an invest in round stats.
+    if isempty(opportunities)
+        delete!(noisy_utilities, "invest")
+    end
+
+    # Softmax selection. This is the SINGLE action-selection chokepoint:
+    # every live agent's invest/innovate/explore/maintain choice is sampled
+    # from this softmax each round.
+    #
+    # Emergence audit P10 (DECISION_TEMPERATURE = T): T divides the utilities
+    # pre-softmax by multiplying the calibrated base temperature —
+    # exp(u / (base * T)) ≡ exp((u / T) / base). T > 1 flattens the choice
+    # distribution toward uniform (a mixed-equilibrium conjecture:
+    # noisy humans approximate the mixed-strategy congestion equilibrium);
+    # T < 1 sharpens toward argmax. BIT-IDENTITY at T = 1.0: the default path
+    # short-circuits before the multiply (dividing by literal 1.0 would be
+    # FP-identical anyway, but the guard makes exactness structural) and
+    # consumes no extra RNG. Validated > 0 here at first use (loud-failure
+    # convention) and at initialize!.
     temperature = agent.config.ACTION_SELECTION_TEMPERATURE
+    decision_temperature = agent.config.DECISION_TEMPERATURE
+    if decision_temperature != 1.0
+        (decision_temperature > 0.0) || error(
+            "Invalid DECISION_TEMPERATURE=$(decision_temperature) at first " *
+            "use (make_decision! softmax). Require > 0.")
+        temperature *= decision_temperature
+    end
     total = sum(exp(u / temperature) for u in values(noisy_utilities))
     if total > 0
         probs = Dict(a => exp(u / temperature) / total for (a, u) in noisy_utilities)
@@ -3493,12 +4114,25 @@ function make_decision!(
             early_signals=early_signals,
             signal_weight=signal_weight
         )
+        # Same-round hygiene (design note): an opportunity
+        # the agent just liquidated this round cannot be re-entered in the
+        # same round — re-committing at full price seconds after paying the
+        # liquidation haircut is pure churn, not a decision.
+        if !isempty(pivoted_opportunity_ids)
+            evals = filter(e -> !(e.opportunity.id in pivoted_opportunity_ids), evals)
+        end
         if !isempty(evals)
             selected_eval = select_portfolio_evaluation(agent, evals, decision_ai_level, perception)
             best_eval = isnothing(selected_eval) ? evals[1] : selected_eval
             best_opp = best_eval.opportunity
             estimated_return = best_eval.estimated_return
             ai_info_for_invest = best_eval.ai_info
+            # F1: the RAW instrument estimate is what the InformationSystem
+            # actually said (best_eval.estimated_return may be S1-shaded).
+            # When no Information object exists (diagnostic path) the two
+            # coincide by construction.
+            instrument_estimated_return = ai_info_for_invest isa Information ?
+                Float64(ai_info_for_invest.estimated_return) : best_eval.estimated_return
             # Extract confidence (from perception) and signal_score (the
             # evaluation's final_score) so _execute_invest! can size the bet by them.
             decision_conf = Float64(get(perception, "decision_confidence", 0.5))
@@ -3506,6 +4140,7 @@ function make_decision!(
             execute_action!(agent, "invest", market, round_num;
                 opportunity=best_opp,
                 estimated_return=estimated_return,
+                instrument_estimated_return=instrument_estimated_return,
                 ai_info=ai_info_for_invest isa Information ? ai_info_for_invest : nothing,
                 innovation_engine=innovation_engine,
                 market_conditions=market_conditions,
@@ -3522,7 +4157,16 @@ function make_decision!(
         execute_action!(agent, chosen_action, market, round_num;
             innovation_engine=innovation_engine,
             market_conditions=market_conditions,
-            uncertainty_perception=perception)
+            uncertainty_perception=perception,
+            sector_density=sector_density)
+    end
+
+    # A1 pivot telemetry (open-action extension): per-decision counts summed
+    # into compile_round_stats' per-round pivot columns.
+    if agent.config.ENABLE_PIVOT
+        outcome["pivot_count"] = pivot_count
+        outcome["pivot_recovered"] = pivot_recovered
+        outcome["pivot_committed"] = pivot_committed
     end
 
     outcome["ai_level_used"] = ai_level
@@ -3627,7 +4271,7 @@ function update_uncertainty_response_from_outcome!(
 
     isempty(levels) && return nothing
 
-    amount = _outcome_float(outcome, ("investment_amount", "amount", "rd_spend", "explore_cost", "cost"))
+    amount = _outcome_float(outcome, ("investment_amount", "amount", "rd_spend", "explore_cost"))
     returned = _outcome_float(outcome, ("capital_returned", "innovation_return", "recovery"))
     multiple = _outcome_float(outcome, ("return_multiple", "cash_multiple"))
     if isnothing(multiple) && !isnothing(amount) && !isnothing(returned) && amount > 0
@@ -3636,7 +4280,7 @@ function update_uncertainty_response_from_outcome!(
         multiple = Bool(get(outcome, "success", false)) ? 1.5 : 0.5
     end
 
-    success = Bool(get(outcome, "success", multiple >= 1.0))
+    success = Bool(get(outcome, "success", multiple >= 1.0 + max(0.0, agent.config.INVESTMENT_SUCCESS_ROI_THRESHOLD)))
     profile = agent.uncertainty_response
     for uncertainty_type in keys(profile.response_weights)
         haskey(levels, uncertainty_type) || continue

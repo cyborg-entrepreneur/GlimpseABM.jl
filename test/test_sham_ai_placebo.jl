@@ -22,7 +22,7 @@ include("test_helpers.jl")
         capital_requirements=10_000.0,
         time_to_maturity=1,
         config=config,
-    )
+   )
     market = MarketEnvironment(config; rng=MersenneTwister(11))
     agent = EmergentAgent(1, config; initial_capital=1_000_000.0,
                           fixed_ai_level="premium", rng=MersenneTwister(7))
@@ -35,7 +35,7 @@ include("test_helpers.jl")
         estimated_return=5.0,
         estimated_uncertainty=0.15,
         confidence=0.95,
-    )
+   )
     explicit_premium_score = GlimpseABM.evaluate_opportunity_basic(
         agent,
         opp,
@@ -44,7 +44,7 @@ include("test_helpers.jl")
         estimated_uncertainty=0.15,
         confidence=0.95,
         ai_level="premium",
-    )
+   )
     agent.fixed_ai_level = "none"
     none_label_score = GlimpseABM.evaluate_opportunity_basic(
         agent,
@@ -53,7 +53,7 @@ include("test_helpers.jl")
         estimated_return=5.0,
         estimated_uncertainty=0.15,
         confidence=0.95,
-    )
+   )
     @test premium_label_score == none_label_score
     @test explicit_premium_score == none_label_score
 
@@ -66,7 +66,7 @@ include("test_helpers.jl")
         market_conditions,
         perception;
         ai_level="premium",
-    )
+   )
     agent.rng = MersenneTwister(13)
     none_evals = GlimpseABM.evaluate_portfolio_opportunities(
         agent,
@@ -74,7 +74,7 @@ include("test_helpers.jl")
         market_conditions,
         perception;
         ai_level="none",
-    )
+   )
     @test only(premium_evals).ai_level_used == "none"
     @test only(premium_evals).final_score == only(none_evals).final_score
 
@@ -87,7 +87,7 @@ include("test_helpers.jl")
         estimated_return=1.2,
         confidence=0.8,
         signal_score=1.0,
-    )
+   )
 
     @test outcome["ai_level_used"] == "premium"
     @test outcome["ai_used"] === false
@@ -99,7 +99,7 @@ include("test_helpers.jl")
         market_conditions,
         "none";
         rng=MersenneTwister(99),
-    )
+   )
     agent.rng = MersenneTwister(99)
     before_maturity = GlimpseABM.get_capital(agent)
     matured = GlimpseABM.process_matured_investments!(
@@ -107,7 +107,7 @@ include("test_helpers.jl")
         market,
         2;
         market_conditions=market_conditions,
-    )
+   )
     @test only(matured)["ai_level"] == "none"
     @test only(matured)["ai_used"] === false
     @test isapprox(GlimpseABM.get_capital(agent) - before_maturity,
@@ -119,7 +119,7 @@ include("test_helpers.jl")
             "amount" => amount,
             "ai_level_used" => "premium",
             "ai_used" => false,
-        )),
+       )),
         Dict{String,Any}(
             "action" => "invest",
             "agent_id" => 2,
@@ -129,7 +129,7 @@ include("test_helpers.jl")
             "amount" => amount,
             "opportunity_id" => opp.id,
             "chosen_opportunity_obj" => opp,
-        ),
+       ),
     ]
 
     GlimpseABM.update_clearing_metrics!(market, actions)

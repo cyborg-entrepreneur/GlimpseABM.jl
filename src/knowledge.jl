@@ -457,6 +457,13 @@ function get_average_agent_knowledge(kb::KnowledgeBase)::Float64
 end
 
 """
+Total number of distinct knowledge pieces currently in the base.
+"""
+function get_total_knowledge_count(kb::KnowledgeBase)::Int
+    return length(kb.knowledge_pieces)
+end
+
+"""
 Compute a scalar "component scarcity" signal in [0, 1]:
 
   0.6 · rarity_of_usage + 0.4 · fraction_unused_by_any_agent

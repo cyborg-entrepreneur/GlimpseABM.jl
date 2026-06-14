@@ -106,7 +106,7 @@ Initialize branch parameters for a sector.
 """
 function _initialize_branch!(market::MarketEnvironment, name::String, profile::SectorProfile)
     log_mu = profile.return_log_mu
-    log_sigma = clamp(profile.return_log_sigma, 0.05, 1.0)
+    log_sigma = clamp(profile.return_log_sigma * market.config.LOG_SIGMA_MULT, 0.05, market.config.LOG_SIGMA_CAP)
     failure_mean = (profile.failure_range[1] + profile.failure_range[2]) / 2
     failure_sigma = clamp(mean(profile.failure_volatility_range), 0.01, 0.5)
 
@@ -152,11 +152,11 @@ function _sample_branch_characteristics(
         log_mu -= 0.12
         log_sigma *= 1.08
     end
-    log_sigma = clamp(log_sigma, 0.05, 1.0)
+    log_sigma = clamp(log_sigma, 0.05, market.config.LOG_SIGMA_CAP)
 
     # Sample latent return
     latent_return = exp(log_mu + log_sigma * randn(market.rng))
-    latent_return = clamp(latent_return, profile.return_range[1], profile.return_range[2])
+    latent_return = clamp(latent_return, profile.return_range[1], profile.return_range[2] * market.config.RETURN_RANGE_MAX_MULT)
 
     # Sample failure probability
     failure_mean = params["failure_mean"]
@@ -194,9 +194,12 @@ function _create_realistic_opportunity(
     # Regime effects are applied only at realization (in realized_return),
     # not at creation, to avoid double-counting regime multipliers.
 
-    # Clamp values
-    latent_return = clamp(latent_return, 0.5, 25.0)
-    latent_failure = clamp(latent_failure, 0.1, 0.95)
+    # Global sanity clamp only. The floor must sit BELOW every sector's
+    # calibrated failure_range minimum (service is 0.033); a floor of 0.1
+    # would censor the calibrated sector heterogeneity (it pinned every
+    # service-sector opportunity at exactly 0.1).
+    latent_return = clamp(latent_return, 0.5, market.config.RETURN_CLAMP_MAX)
+    latent_failure = clamp(latent_failure, 0.02, 0.95)
 
     return Opportunity(
         id=opp_id,
@@ -231,40 +234,6 @@ function _initialize_opportunities!(market::MarketEnvironment)
         end
         push!(market.opportunities_by_sector[sector], opp)
     end
-end
-
-"""
-Transition to next market regime based on transition probabilities.
-"""
-function _transition_regime!(market::MarketEnvironment)
-    transitions = market.config.MACRO_REGIME_TRANSITIONS
-    if !haskey(transitions, market.market_regime)
-        return
-    end
-
-    probs = transitions[market.market_regime]
-    regimes = collect(keys(probs))
-    weights = [probs[r] for r in regimes]
-
-    # Normalize weights
-    total = sum(weights)
-    if total > 0
-        weights ./= total
-    else
-        return
-    end
-
-    # Sample next regime
-    cumsum_weights = cumsum(weights)
-    r = rand(market.rng)
-    idx = clamp(searchsortedfirst(cumsum_weights, r), 1, length(regimes))
-    market.market_regime = regimes[idx]
-
-    # Update modifiers
-    market.regime_return_multiplier = get(market.config.MACRO_REGIME_RETURN_MODIFIERS, market.market_regime, 1.0)
-    market.regime_failure_multiplier = get(market.config.MACRO_REGIME_FAILURE_MODIFIERS, market.market_regime, 1.0)
-    market.trend = get(market.config.MACRO_REGIME_TREND, market.market_regime, 0.0)
-    market.volatility = get(market.config.MACRO_REGIME_VOLATILITY, market.market_regime, 0.2)
 end
 
 """
@@ -328,10 +297,11 @@ function step!(
         end
     end
 
-    # Update regime with some probability
-    if rand(market.rng) < 0.1
-        _transition_regime!(market)
-    end
+    # Regime transitions happen exactly once per round, in update_macro_regime!
+    # (called from update_market_dynamics! in Phase 5.5). A second stochastic
+    # transition here would apply the NBER-calibrated monthly transition matrix
+    # ~1.1x per month, systematically shortening regime durations relative to
+    # the documented calibration.
 
     # Calculate crowding metrics
     total_actions = length(agent_actions)
@@ -353,19 +323,13 @@ function step!(
         # non-none for grouping while action["ai_used"] suppresses AI dynamics.
         ai_usage_share = count(action_counts_as_ai_use, agent_actions) / max(1, total_actions)
 
-        # Preserve boom_streak across the rebuild. boom_streak is written by
-        # update_market_dynamics! and read by the dynamic black-swan probability;
-        # rebuilding crowding_metrics wholesale would reset it each round before
-        # the next update could escalate it.
-        prior_boom_streak = get(market.crowding_metrics, "boom_streak", 0.0)
         market.crowding_metrics = Dict(
             "crowding_index" => crowding_index,
             "share_invest" => share_invest,
             "share_innovate" => share_innovate,
             "share_explore" => share_explore,
             "share_maintain" => share_maintain,
-            "ai_usage_share" => ai_usage_share,
-            "boom_streak" => prior_boom_streak
+            "ai_usage_share" => ai_usage_share
         )
     end
 
@@ -544,15 +508,11 @@ function opportunity_signal_strength(opp::Opportunity)::Float64
     impact_trace = 1.0 - exp(-max(0.0, Float64(opp.market_impact)) / 3.0)
     market_trace = 0.45 * invested_trace + 0.35 * competition_trace + 0.20 * impact_trace
 
-    lifecycle_signal = if opp.lifecycle_stage == "mature"
-        0.90
-    elseif opp.lifecycle_stage == "growing"
-        0.70
-    elseif opp.lifecycle_stage == "declining"
-        0.80
-    else
-        0.30
-    end
+    # Constant lifecycle term pinned at the "emerging" value (0.30): the staged
+    # opportunity lifecycle was excised 2026-06-09 as unreachable (review
+    # decision #4) — every opportunity stayed "emerging" in practice, so this
+    # term always contributed 0.15 * 0.30.
+    lifecycle_signal = 0.30
 
     signal = 0.60 * intrinsic_legibility + 0.25 * market_trace + 0.15 * lifecycle_signal
 
@@ -819,11 +779,11 @@ function get_demand_adjustments(market::MarketEnvironment, sector::String)::Dict
     #     also somewhat elevated (a tough environment, even if capacity exists).
     if clearing_ratio > 1.0
         excess_demand = clearing_ratio - 1.0
-        return_penalty *= 1.0 + 0.45 * excess_demand
+        return_penalty *= 1.0 + market.config.RETURN_UNDERSUPPLY_BONUS * excess_demand
         failure_pressure *= 1.0 + 0.20 * excess_demand
     else
         excess_supply = 1.0 - clearing_ratio
-        return_penalty *= 1.0 - 0.7 * excess_supply
+        return_penalty *= 1.0 - market.config.RETURN_OVERSUPPLY_PENALTY * excess_supply
         failure_pressure *= 1.0 + 0.30 * excess_supply
     end
 
@@ -890,19 +850,13 @@ function update_market_dynamics!(
     market.market_momentum = market.market_momentum * 0.8 +
         0.2 * (investment_activity + quality_adjustment + ai_activity * 0.1)
 
-    # Track boom streak
-    boom_streak = get(market.crowding_metrics, "boom_streak", 0.0)
-    if market.market_momentum > 1.5
-        boom_streak += 1
-    else
-        boom_streak = max(0, boom_streak - 1)
-    end
-    market.crowding_metrics["boom_streak"] = boom_streak
-
-    # Dynamic black swan probability
+    # Black swan probability: base rate modulated by AI investment share.
+    # The former boom-streak escalation (BOOM_TAIL_UNCERTAINTY_EXPONENT) was
+    # excised 2026-06-09 (review decision #4): its investment_activity
+    # normalizer ($250K/agent/round) was unreachable under bet-sizing caps,
+    # so boom_streak was identically 0 and the exponent never applied.
     base_prob = market.config.BLACK_SWAN_PROBABILITY
-    exponent = market.config.BOOM_TAIL_UNCERTAINTY_EXPONENT
-    dynamic_black_swan = base_prob * (exponent^max(0, boom_streak - 1)) * (1 + ai_invest_share * 0.3)
+    dynamic_black_swan = base_prob * (1 + ai_invest_share * 0.3)
 
     crowding_index = get(market.crowding_metrics, "crowding_index", 0.25)
 
@@ -955,16 +909,14 @@ function update_macro_regime!(
         end
     end
 
-    # Recession/crisis drag
-    if invest < 0.9 || momentum < -0.6
-        drag = 0.05 * max(0.9 - invest, 0.0) + 0.04 * max(-0.6 - momentum, 0.0)
-        if haskey(idx_map, "recession")
-            adjustments[idx_map["recession"]] += drag
-        end
-        if haskey(idx_map, "crisis")
-            adjustments[idx_map["crisis"]] += drag * 0.5
-        end
-    end
+    # NOTE (2026-06-09, review decision #4): the former recession/crisis drag
+    # branch (`invest < 0.9 || momentum < -0.6`) was excised. Its
+    # investment_activity normalizer ($250K/agent/round) was unreachable under
+    # bet-sizing caps (realistic values 0.1-0.3), so the branch fired EVERY
+    # round — a permanent, unintended downward regime tilt layered on top of
+    # the NBER-calibrated transition matrix. Removing it is behavior-changing:
+    # regime conditions are slightly less recessionary on average; the
+    # recalibration pass absorbs the shift.
 
     # Crowding effects
     crowd_threshold = market.config.RETURN_DEMAND_CROWDING_THRESHOLD
@@ -1025,15 +977,14 @@ function update_macro_regime!(
     market.trend = clamp(0.7 * market.trend + 0.3 * target_trend, -1.0, 1.0)
     market.volatility = clamp(0.6 * market.volatility + 0.4 * target_volatility, 0.05, 1.0)
 
-    # Reset boom streak on crisis
+    # Reset momentum on crisis
     if new_state == "crisis"
-        market.crowding_metrics["boom_streak"] = 0.0
         market.market_momentum = min(market.market_momentum, -1.5)
     end
 end
 
 # ============================================================================
-# OPPORTUNITY LIFECYCLE MANAGEMENT
+# OPPORTUNITY MANAGEMENT (creation, aging, removal)
 # ============================================================================
 
 """
@@ -1107,25 +1058,18 @@ function manage_opportunities!(
         end
     end
 
-    # Age all opportunities, decay competition, and update lifecycle stage.
-    # Adoption rate is approximated as opportunity_demand (number of agents
-    # investing this round) / n_agents — a proxy for market penetration that
-    # drives the emerging → growing → mature → declining transition.
-    n_agents_f = Float64(max(1, market.n_agents))
+    # Age all opportunities and decay competition. (The staged opportunity
+    # lifecycle that was once updated here was excised 2026-06-09 as
+    # unreachable — review decision #4.)
     for opp in market.opportunities
         opp.age += 1
-        opp.competition = max(0.0, opp.competition * 0.9)
-        demand_count = Float64(get(opportunity_demand, opp.id, 0))
-        adoption_rate = clamp(demand_count / n_agents_f, 0.0, 1.0)
-        update_lifecycle!(opp, adoption_rate)
+        opp.competition = max(0.0, opp.competition * (1.0 - market.config.COMPETITION_DECAY_RATE))
     end
 
     # Remove dead opportunities
     dead_opps = Opportunity[]
     for opp in market.opportunities
         if opp.competition < 0.01 && opp.age > 20
-            push!(dead_opps, opp)
-        elseif opp.lifecycle_stage == "declining" && opp.competition < 0.05
             push!(dead_opps, opp)
         elseif opp.age > 10 && get(opportunity_demand, opp.id, 0) == 0
             push!(dead_opps, opp)
@@ -1134,11 +1078,6 @@ function manage_opportunities!(
 
     for opp in dead_opps
         _remove_opportunity!(market, opp)
-    end
-
-    # Additional cleanup of very old declining opportunities
-    filter!(market.opportunities) do opp
-        !(opp.lifecycle_stage == "declining" && opp.age > 50 && opp.competition < 0.1)
     end
 
     _rebuild_sector_index!(market)
@@ -1400,6 +1339,24 @@ function get_perceived_opportunities(
     # fraction of public, data-rich opportunities, but visibility remains a
     # discovery process rather than a deterministic global top-k oracle.
     raw_budget = (3.0 + info_breadth * 60.0) * (1.0 + info_quality)
+
+    # WEALTH_SCALED_COMPUTE robustness cell (reviewer addendum, 2026-06-11):
+    # founders purchase analysis breadth in proportion to their resources —
+    # the rich-get-richer marginal-compute dynamic. The multiplier
+    # clamp(capital/initial_equity, 0.25, 4.0)^scaling applies UNIFORMLY
+    # across tiers (no tier-keyed term; the exact-equality counterfactual
+    # discipline is preserved — any tier asymmetry in its effect must emerge
+    # from tier differences in baseline budgets and billing). Billing charges
+    # market_analysis per visible opportunity, so the extra visibility is
+    # paid for at the margin under the hybrid/token backends. Default 0.0
+    # skips this block entirely (bit-identical baseline).
+    wealth_scaling = max(0.0, Float64(getfield_default(market.config, :WEALTH_COMPUTE_SCALING, 0.0)))
+    if wealth_scaling > 0.0 && hasproperty(agent, :resources)
+        initial_eq = hasproperty(agent.resources, :performance) ?
+            max(Float64(agent.resources.performance.initial_equity), 1.0) : 1.0
+        capital_ratio = max(Float64(agent.resources.capital), 0.0) / initial_eq
+        raw_budget *= clamp(capital_ratio, 0.25, 4.0)^wealth_scaling
+    end
     coverage = 1.0 - exp(-1.4 * raw_budget / max(1.0, length(all_opportunities)))
     target_visible = clamp(round(Int, length(all_opportunities) * coverage), 1, length(all_opportunities))
 
@@ -1531,8 +1488,8 @@ function create_niche_opportunity(
     # realization.
     niche_opp = Opportunity(
         id="niche_$(branch_name)_$(round_num)_$(rand(market.rng, 1000:9999))",
-        latent_return_potential=clamp(latent_return, 0.5, 25.0),
-        latent_failure_potential=clamp(latent_failure, 0.1, 0.95),
+        latent_return_potential=clamp(latent_return, 0.5, market.config.RETURN_CLAMP_MAX),
+        latent_failure_potential=clamp(latent_failure, 0.02, 0.95),
         complexity=rand(market.rng, Uniform(0.4, 0.8)),
         # discovered=false: creator-only visibility is handled in
         # get_opportunities_for_agent via a `created_by == agent.id` override.
@@ -1581,7 +1538,7 @@ function record_innovation_outcome!(
         # immediately after spawn.
         opportunity.latent_return_potential = clamp(
             opportunity.latent_return_potential + 0.05 * intrinsic_gain,
-            0.15, 25.0
+            0.15, market.config.RETURN_CLAMP_MAX
         )
     else
         opportunity.market_impact = 0.0
@@ -1656,8 +1613,8 @@ function spawn_opportunity_from_innovation!(
 
     opportunity = Opportunity(
         id=opp_id,
-        latent_return_potential=clamp(latent_return, 0.5, 25.0),
-        latent_failure_potential=clamp(latent_failure, 0.1, 0.95),
+        latent_return_potential=clamp(latent_return, 0.5, market.config.RETURN_CLAMP_MAX),
+        latent_failure_potential=clamp(latent_failure, 0.02, 0.95),
         complexity=clamp(0.3 + innovation.quality * 0.3, 0.3, 1.0),
         # discovered=false — creator visibility handled via the created_by
         # override in get_opportunities_for_agent (see create_niche_opportunity
@@ -1685,66 +1642,6 @@ function spawn_opportunity_from_innovation!(
     _index_opportunity!(market, opportunity)
 
     return opportunity
-end
-
-# ============================================================================
-# NOVELTY DISRUPTION (The "DeepSeek Effect")
-# ============================================================================
-
-"""
-Apply novelty disruption when a highly novel innovation occurs.
-Crowded opportunities in the same sector lose value - this implements
-the mechanism where unexpected innovations disrupt established opportunities.
-
-This is grounded in the theoretical insight that "the more important the
-innovation, the less predictable it is" (Rescher, 2016). Novel innovations
-create new possibilities that can make existing opportunities less valuable.
-"""
-function apply_novelty_disruption!(
-    market::MarketEnvironment,
-    innovation::Innovation
-)::Int
-    # Check if disruption is enabled
-    if !getfield_default(market.config, :NOVELTY_DISRUPTION_ENABLED, true)
-        return 0
-    end
-
-    novelty = clamp(something(innovation.novelty, 0.0), 0.0, 1.0)
-    threshold = getfield_default(market.config, :NOVELTY_DISRUPTION_THRESHOLD, 0.6)
-
-    if novelty < threshold
-        return 0  # No disruption for low-novelty innovations
-    end
-
-    sector = something(innovation.sector, "tech")
-    magnitude = getfield_default(market.config, :NOVELTY_DISRUPTION_MAGNITUDE, 0.25)
-    comp_threshold = getfield_default(market.config, :DISRUPTION_COMPETITION_THRESHOLD, 10.0)
-
-    # Base disruption scales with how novel the innovation is
-    # At threshold: 0% disruption, at novelty=1.0: full magnitude
-    base_disruption = (novelty - threshold) / (1.0 - threshold) * magnitude
-
-    disrupted_count = 0
-    for opp in market.opportunities
-        # Only disrupt opportunities in the same sector with high competition
-        if opp.sector == sector && opp.competition > comp_threshold
-            # Vulnerability scales with competition (crowded = fragile)
-            # At competition=0: vulnerability = 1.0
-            # Competition scale: 0=none, 1.0=normal, 3.0=severe crowding
-            # At competition=1.0 (normal): vulnerability = 1.25
-            # At competition=2.0 (crowded): vulnerability = 1.5
-            # At competition=3.0 (severe): vulnerability = 1.75
-            vulnerability = 1.0 + (opp.competition / 2.0) * 0.5
-            reduction = base_disruption * vulnerability
-
-            # Apply disruption - reduce latent return potential
-            opp.latent_return_potential *= (1.0 - clamp(reduction, 0.0, 0.5))
-            opp.disrupted_count += 1
-            disrupted_count += 1
-        end
-    end
-
-    return disrupted_count
 end
 
 # ============================================================================

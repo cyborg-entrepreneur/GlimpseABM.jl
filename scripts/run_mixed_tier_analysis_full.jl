@@ -32,14 +32,15 @@ include(joinpath(@__DIR__, "_launch_metadata.jl"))
 # EXPERIMENT PARAMETERS
 # ============================================================================
 
-# N_AGENTS / N_RUNS / N_ROUNDS are readable from env so N-sensitivity runs
-# (N=1000, 5000) need no forking of the script. Defaults match the
-# paper-headline configuration.
+# v3.5.21+: N_AGENTS / N_RUNS / N_ROUNDS readable from env so we can spin
+# off N-sensitivity appendix runs (N=1000, 5000) without forking the script.
+# Defaults match the v3.5.20 paper-headline configuration.
 const N_AGENTS = parse(Int, get(ENV, "N_AGENTS", "2000"))
 const N_ROUNDS = parse(Int, get(ENV, "N_ROUNDS", "60"))
 const N_RUNS   = parse(Int, get(ENV, "N_RUNS",   "50"))
 const AGENTS_PER_TIER = N_AGENTS ÷ 4
-const AI_TIERS = ["none", "basic", "advanced", "premium"]
+# Provides AI_TIERS, balanced_tier_assignments, apply_balanced_fixed_tiers!
+include(joinpath(@__DIR__, "_fixed_tier_assignment.jl"))
 const EMERGENT_UNCERTAINTY_DIMENSIONS = [
     "actor_ignorance",
     "practical_indeterminism",
@@ -280,31 +281,17 @@ function emergent_summary_fields(prefix::String, tier_emergent::AbstractDict)::D
     return fields
 end
 
-function create_tier_assignments(n_agents::Int, rng::AbstractRNG)
-    assignments = String[]
-    agents_per_tier = n_agents ÷ length(AI_TIERS)
-    for tier in AI_TIERS
-        append!(assignments, fill(tier, agents_per_tier))
-    end
-    remainder = n_agents - length(assignments)
-    for i in 1:remainder
-        push!(assignments, AI_TIERS[mod1(i, length(AI_TIERS))])
-    end
-    shuffle!(rng, assignments)
-    return assignments
-end
-
 function create_config(; seed::Int=42)
-    # Inherit BLS-calibrated defaults: SURVIVAL_THRESHOLD=$2M,
-    # INITIAL_CAPITAL_RANGE=($2.5M, $10M), heterogeneous capital + threshold.
-    # Fixed-tier configuration, so mixed-tier survival is directly comparable
-    # to the single-population baseline (mean 0.540, BLS 50-55%).
+ # Inherit BLS-calibrated defaults: SURVIVAL_THRESHOLD=$2M,
+ # INITIAL_CAPITAL_RANGE=($2.5M, $10M), heterogeneous capital + threshold.
+ # Match v3.3.4 reval so mixed-tier survival is directly
+ # comparable to the single-population baseline (mean 0.540, BLS 50-55%).
     EmergentConfig(
         N_AGENTS=N_AGENTS,
         N_ROUNDS=N_ROUNDS,
         RANDOM_SEED=seed,
         AGENT_AI_MODE="fixed",
-    )
+   )
 end
 
 """
@@ -313,44 +300,27 @@ Run a single mixed-tier simulation with comprehensive metric collection.
 function run_single_mixed_simulation(run_idx::Int, seed::Int)
     rng = Random.MersenneTwister(seed)
     config = create_config(seed=seed)
-    tier_assignments = create_tier_assignments(N_AGENTS, rng)
+    tier_assignments = balanced_tier_assignments(N_AGENTS, rng)
 
     initial_dist = Dict("none" => 0.25, "basic" => 0.25, "advanced" => 0.25, "premium" => 0.25)
     sim = GlimpseABM.EmergentSimulation(
         config=config,
         initial_tier_distribution=initial_dist,
         seed=seed
-    )
+   )
 
-    # Override with fixed tier assignments.
-    # When overriding tier after construction, we must reset subscriptions
-    # to match the new tier. The constructor started a subscription for each
-    # agent's originally-sampled tier; leaving those in place while switching
-    # fixed_ai_level corrupts billing (agent pays for tier X while using tier Y).
-    for (i, agent) in enumerate(sim.agents)
-        old_tier = agent.fixed_ai_level
-        new_tier = tier_assignments[i]
-        agent.fixed_ai_level = new_tier
-        agent.current_ai_level = new_tier
-        # Cancel all prior subscriptions; ensure_subscription_schedule! will
-        # also cancel non-matching tiers internally, but this call pattern is
-        # explicit and safer.
-        for tier in collect(keys(agent.subscription_accounts))
-            GlimpseABM.cancel_subscription_schedule!(agent, tier)
-        end
-        if new_tier != "none"
-            GlimpseABM.ensure_subscription_schedule!(agent, new_tier)
-        end
-    end
+ # Override with fixed tier assignments + v2.9 subscription hygiene
+ # (shared implementation in _fixed_tier_assignment.jl).
+    apply_balanced_fixed_tiers!(sim, tier_assignments)
 
-    # Per-round survival trajectories per tier
+ # Per-round survival trajectories per tier
     trajectories = Dict{String, Vector{Float64}}(tier => Float64[] for tier in AI_TIERS)
 
-    # Time-resolved saturation tracking — investments are released on maturity,
-    # so end-of-run snapshot misses peak crowding. Sample saturation each round.
+ # Time-resolved saturation tracking — investments are released on maturity,
+ # so end-of-run snapshot misses peak crowding. Sample saturation each round.
     sat_per_round = Dict{Int, Vector{Float64}}()  # round -> all live saturations
 
-    # Run simulation, tracking survival + saturation each round
+ # Run simulation, tracking survival + saturation each round
     for round in 1:N_ROUNDS
         GlimpseABM.step!(sim, round)
         for tier in AI_TIERS
@@ -367,20 +337,20 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
         sat_per_round[round] = round_sats
     end
 
-    # End-of-run aggregation. Action shares are computed from agent.action_history
-    # over ALL agents (alive + dead), not just survivors at the end. Using the
-    # full action history avoids survivor bias: counting only agents alive after
-    # each step would exclude actions taken by agents that died that round,
-    # skewing shares toward survivors.
+ # End-of-run aggregation. Action shares are computed from agent.action_history
+ # over ALL agents (alive + dead), not just survivors at the end. Earlier
+ # passes used last_action on agents alive after each step!, which excluded
+ # actions taken by agents that died that round — biasing shares toward the
+ # actions of survivors. Using action_history over all agents fixes that.
     tier_stats = Dict{String, Dict{String, Any}}()
     all_emergent_by_tier = GlimpseABM.aggregate_emergent_uncertainty_by_tier(
         sim.agents;
         include_dead=true,
-    )
+   )
     survivor_emergent_by_tier = GlimpseABM.aggregate_emergent_uncertainty_by_tier(
         sim.agents;
         include_dead=false,
-    )
+   )
 
     for tier in AI_TIERS
         tier_agents = filter(a -> a.fixed_ai_level == tier, sim.agents)
@@ -392,7 +362,7 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
 
         survivor_capitals = [a.resources.capital for a in alive]
 
-        # Action counts from full action_history (no survivorship bias)
+ # Action counts from full action_history (no survivorship bias)
         action_counts = Dict("invest" => 0, "innovate" => 0, "explore" => 0, "maintain" => 0)
         for agent in tier_agents
             for act in agent.action_history
@@ -403,13 +373,13 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
         innovate_share = total_actions > 0 ? action_counts["innovate"] / total_actions : 0.0
         explore_share = total_actions > 0 ? action_counts["explore"] / total_actions : 0.0
 
-        # Innovation metrics — agent struct fields
+ # Innovation metrics — agent struct fields (v3.3.4+, post-bug-fix)
         tier_innovation_count = sum(a.innovation_count for a in tier_agents)
         tier_innovation_successes = sum(a.innovation_success_count for a in tier_agents)
         tier_innovation_success_rate = tier_innovation_count > 0 ?
             tier_innovation_successes / tier_innovation_count : 0.0
 
-        # Niches discovered — read from agent uncertainty metrics
+ # Niches discovered — read from agent uncertainty metrics
         tier_total_niches = sum(a.uncertainty_metrics.niches_discovered for a in tier_agents)
         tier_combinations = sum(a.uncertainty_metrics.new_combinations_created for a in tier_agents)
 
@@ -420,7 +390,7 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
         perception_telemetry = Dict(
             key => history_mean(sim, "mean_$(key)_$(tier)")
             for key in TIER_PERCEPTION_KEYS
-        )
+       )
 
         tier_stats[tier] = merge(Dict(
             "total" => length(tier_agents),
@@ -445,8 +415,8 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
             "total_niches" => tier_total_niches,
             "niches_per_agent" => tier_total_niches / length(tier_agents),
             "combinations_per_agent" => tier_combinations / length(tier_agents),
-            # Backward-compatible aliases now use all assigned agents; explicit
-            # survivor_* columns preserve the older survivor-only view.
+ # Backward-compatible aliases now use all assigned agents; explicit
+ # survivor_* columns preserve the older survivor-only view.
             "emergent_actor_ignorance" => all_emergent_fields["all_agent_emergent_actor_ignorance"],
             "emergent_practical_indeterminism" => all_emergent_fields["all_agent_emergent_practical_indeterminism"],
             "emergent_agentic_novelty" => all_emergent_fields["all_agent_emergent_agentic_novelty"],
@@ -454,25 +424,25 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
             "mean_visible_opportunities" => mean_visible_opps,
             "mean_info_quality_used" => mean_info_quality,
             "visible_hhi" => visible_hhi,
-        ), all_emergent_fields, survivor_emergent_fields, confidence_outcome, perception_telemetry)
+       ), all_emergent_fields, survivor_emergent_fields, confidence_outcome, perception_telemetry)
     end
 
-    # Capacity-saturation diagnostics — time-resolved across all rounds.
-    # End-of-run snapshot misses peak crowding because investments are released
-    # on maturity (agents.jl:1316). Aggregate over the full per-round panel.
+ # Capacity-saturation diagnostics — time-resolved across all rounds.
+ # End-of-run snapshot misses peak crowding because investments are released
+ # on maturity (agents.jl:1316). Aggregate over the full per-round panel.
     K_sat = hasproperty(sim.config, :CROWDING_CAPACITY_RATIO_K) ?
         sim.config.CROWDING_CAPACITY_RATIO_K : 1.5
     all_sats = Float64[]
     for r in 1:N_ROUNDS
         append!(all_sats, get(sat_per_round, r, Float64[]))
     end
-    # Per-round peak saturation (max in each round), then aggregate
+ # Per-round peak saturation (max in each round), then aggregate
     round_maxes = Float64[]
     for r in 1:N_ROUNDS
         rs = get(sat_per_round, r, Float64[])
         push!(round_maxes, isempty(rs) ? 0.0 : maximum(rs))
     end
-    # Per-round frac above K, then aggregate
+ # Per-round frac above K, then aggregate
     round_fracs_K = Float64[]
     for r in 1:N_ROUNDS
         rs = get(sat_per_round, r, Float64[])
@@ -500,7 +470,7 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
             "mean_round_peak" => mean(round_maxes),
             "max_frac_above_K" => maximum(round_fracs_K),
             "mean_frac_above_K_per_round" => mean(round_fracs_K),
-        )
+       )
     end
 
     decision_diag_keys = vcat([
@@ -536,8 +506,15 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
         perception_component_keys_from_history(sim.history))
     decision_diag = Dict{String,Float64}()
     for key in decision_diag_keys
-        vals = Float64[Float64(get(h, key, 0.0)) for h in sim.history if haskey(h, key)]
-        decision_diag[key] = isempty(vals) ? 0.0 : mean(vals)
+ # Per-tier round telemetry emits NaN for empty cells (no agents of the
+ # tier that round); filter non-finite values so empty cells drop out
+ # of the per-run mean instead of deflating it. No finite observations
+ # at all -> NaN, not a 0.0 sentinel.
+        vals = Float64[
+            Float64(h[key]) for h in sim.history
+            if haskey(h, key) && h[key] isa Number && isfinite(Float64(h[key]))
+        ]
+        decision_diag[key] = isempty(vals) ? NaN : mean(vals)
     end
 
     return Dict(
@@ -547,7 +524,7 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
         "saturation" => sat_diag,
         "decision_diagnostics" => decision_diag,
         "status" => "completed"
-    )
+   )
 end
 
 """
@@ -581,7 +558,7 @@ function paired_treatment_effects(all_results::AbstractVector{<:AbstractDict})
             "ci_lo_pp" => mean_pp - 1.96 * se_pp,
             "ci_hi_pp" => mean_pp + 1.96 * se_pp,
             "n_runs" => n_runs,
-        )
+       )
     end
 
     return paired
@@ -675,6 +652,35 @@ function dominant_second_order_channel(practical_delta::Float64, novelty_delta::
     isempty(positive) && return "none"
     idx = argmax([pair[2] for pair in positive])
     return positive[idx][1]
+end
+
+# Keys build_paradox_mechanism_scorecard emits that are deliberately NOT part
+# of the hand-maintained PARADOX_SCORECARD_KEYS metric list (identity/boolean/
+# categorical columns appended separately by the row writers).
+const SCORECARD_NON_METRIC_KEYS = Set([
+    "tier",
+    "first_order_benefit_observed",
+    "horizon_recession_observed",
+    "paradox_logic_supported",
+    "dominant_second_order_channel",
+])
+
+# PARADOX_SCORECARD_KEYS duplicates the keys hand-typed in
+# build_paradox_mechanism_scorecard; if the two drift apart the scorecard CSV
+# silently filled the gap with 0.0 sentinels. Fail loudly instead.
+function assert_scorecard_keys_in_sync(scorecard::AbstractDict)
+    expected = Set(PARADOX_SCORECARD_KEYS)
+    for (tier, s) in scorecard
+        actual = Set(String(k) for k in keys(s) if !(String(k) in SCORECARD_NON_METRIC_KEYS))
+        missing_keys = sort!(collect(setdiff(expected, actual)))
+        extra_keys = sort!(collect(setdiff(actual, expected)))
+        if !isempty(missing_keys) || !isempty(extra_keys)
+            error("PARADOX_SCORECARD_KEYS out of sync with build_paradox_mechanism_scorecard " *
+                  "(tier=$tier). Listed but not built: [$(join(missing_keys, ", "))]. " *
+                  "Built but not listed: [$(join(extra_keys, ", "))].")
+        end
+    end
+    return nothing
 end
 
 """
@@ -846,9 +852,9 @@ function build_paradox_mechanism_scorecard(summary::Dict)::Dict{String,Dict{Stri
             "paradox_logic_supported" => paradox_logic_supported,
             "dominant_second_order_channel" => dominant_second_order_channel(
                 practical_delta, novelty_delta, recursion_delta
-            ),
+           ),
             "paradox_alignment_score" => alignment_score,
-        )
+       )
     end
 
     return scorecard
@@ -870,7 +876,7 @@ function aggregate_results(all_results::AbstractVector{<:AbstractDict})
             "innovation_success_rate" => Float64[],
             "niches_per_agent" => Float64[],
             "combinations_per_agent" => Float64[],
-        )
+       )
         for key in CONFIDENCE_OUTCOME_KEYS
             tier_data[tier][key] = Float64[]
         end
@@ -882,7 +888,7 @@ function aggregate_results(all_results::AbstractVector{<:AbstractDict})
         end
     end
 
-    # Collect trajectories
+ # Collect trajectories
     all_trajectories = Dict{String, Vector{Vector{Float64}}}(tier => Vector{Float64}[] for tier in AI_TIERS)
 
     successful_runs = 0
@@ -917,7 +923,7 @@ function aggregate_results(all_results::AbstractVector{<:AbstractDict})
         end
     end
 
-    # Compute mean trajectories
+ # Compute mean trajectories
     mean_trajectories = Dict{String, Vector{Float64}}()
     for tier in AI_TIERS
         if !isempty(all_trajectories[tier])
@@ -931,12 +937,12 @@ function aggregate_results(all_results::AbstractVector{<:AbstractDict})
         end
     end
 
-    # Compute summary statistics. Every aggregate is guarded against
-    # empty / single-sample inputs so calibration sweeps and zero-success
-    # batches do not poison the saved CSVs with NaN. mean/std on a 0-length
-    # vector returns NaN; std on a 1-length vector also returns NaN (sample
-    # variance needs n>=2). safe_mean/safe_std collapse both edge cases to
-    # 0.0 so downstream consumers see a valid Float64.
+ # Compute summary statistics. v3.5.19: every aggregate is guarded against
+ # empty / single-sample inputs so calibration sweeps and zero-success
+ # batches do not poison the saved CSVs with NaN. mean/std on a 0-length
+ # vector returns NaN; std on a 1-length vector also returns NaN (sample
+ # variance needs n>=2). safe_mean/safe_std collapse both edge cases to
+ # 0.0 so downstream consumers see a valid Float64.
     safe_mean(v) = isempty(v) ? 0.0 : mean(v)
     safe_std(v)  = length(v) < 2 ? 0.0 : std(v)
     summary_stats = Dict{String, Dict{String, Any}}()
@@ -957,7 +963,7 @@ function aggregate_results(all_results::AbstractVector{<:AbstractDict})
             "mean_combinations_per_agent" => safe_mean(d["combinations_per_agent"]),
             "n_runs" => length(d["survival_rate"]),
             "trajectory" => get(mean_trajectories, tier, Float64[])
-        )
+       )
         for key in CONFIDENCE_OUTCOME_KEYS
             tier_summary[key] = safe_mean(d[key])
             tier_summary[key * "_run_std"] = safe_std(d[key])
@@ -973,7 +979,7 @@ function aggregate_results(all_results::AbstractVector{<:AbstractDict})
         summary_stats[tier] = tier_summary
     end
 
-    # Aggregate saturation diagnostics across runs (time-resolved)
+ # Aggregate saturation diagnostics across runs (time-resolved)
     sat_keys = ["max_overall", "p50", "p75", "p90", "p95", "p99",
                 "frac_above_K", "frac_above_2K", "n_obs",
                 "max_round_peak", "mean_round_peak",
@@ -1027,7 +1033,10 @@ function aggregate_results(all_results::AbstractVector{<:AbstractDict})
         for r in all_results
             r["status"] == "completed" || continue
             haskey(r, "decision_diagnostics") || continue
-            push!(vals, Float64(get(r["decision_diagnostics"], key, 0.0)))
+ # Per-run diagnostics are NaN when the run had no finite cells for
+ # this key; skip them so they drop out of the cross-run mean.
+            v = Float64(get(r["decision_diagnostics"], key, NaN))
+            isfinite(v) && push!(vals, v)
         end
         decision_diag_summary["mean_" * key] = safe_mean(vals)
         decision_diag_summary["std_" * key] = safe_std(vals)
@@ -1041,8 +1050,9 @@ function aggregate_results(all_results::AbstractVector{<:AbstractDict})
         "saturation_summary" => sat_summary,
         "decision_diagnostics_summary" => decision_diag_summary,
         "successful_runs" => successful_runs
-    )
+   )
     summary["paradox_mechanism_scorecard"] = build_paradox_mechanism_scorecard(summary)
+    assert_scorecard_keys_in_sync(summary["paradox_mechanism_scorecard"])
     return summary
 end
 
@@ -1053,7 +1063,7 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
     mkpath(output_dir)
     stats = summary["summary_stats"]
 
-    # 1. Summary statistics
+ # 1. Summary statistics
     summary_rows = []
     for tier in AI_TIERS
         s = stats[tier]
@@ -1073,7 +1083,7 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
             :mean_niches_per_agent => s["mean_niches_per_agent"],
             :mean_combinations_per_agent => s["mean_combinations_per_agent"],
             :n_runs => s["n_runs"],
-        )
+       )
         for key in CONFIDENCE_OUTCOME_KEYS
             row[Symbol(key)] = get(s, key, 0.0)
             row[Symbol(key * "_run_std")] = get(s, key * "_run_std", 0.0)
@@ -1120,7 +1130,7 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
         summary_perception_std_cols,
         summary_conf_cols,
         summary_conf_std_cols,
-    ))
+   ))
     CSV.write(joinpath(output_dir, "summary_stats.csv"), summary_df)
 
     if haskey(summary, "paradox_mechanism_scorecard")
@@ -1130,10 +1140,12 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
             row = Dict{Symbol,Any}(
                 :tier => tier,
                 :tier_label => tier_display_label(tier),
-            )
+           )
             s = scorecard[tier]
             for key in PARADOX_SCORECARD_KEYS
-                row[Symbol(key)] = get(s, key, 0.0)
+                haskey(s, key) || error("scorecard key missing: $key — " *
+                    "PARADOX_SCORECARD_KEYS out of sync with build_paradox_mechanism_scorecard")
+                row[Symbol(key)] = s[key]
             end
             row[:first_order_benefit_observed] = get(s, "first_order_benefit_observed", false)
             row[:horizon_recession_observed] = get(s, "horizon_recession_observed", false)
@@ -1151,11 +1163,11 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
                 :paradox_logic_supported,
                 :dominant_second_order_channel,
             ],
-        ))
+       ))
         CSV.write(joinpath(output_dir, "paradox_mechanism_scorecard.csv"), score_df)
     end
 
-    # 2. Per-run detailed data
+ # 2. Per-run detailed data
     run_rows = []
     for result in all_results
         if result["status"] == "completed"
@@ -1180,7 +1192,7 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
                     :innovation_success_rate => s["innovation_success_rate"],
                     :niches_per_agent => s["niches_per_agent"],
                     :combinations_per_agent => s["combinations_per_agent"],
-                )
+               )
                 for key in CONFIDENCE_OUTCOME_KEYS
                     row[Symbol(key)] = get(s, key, 0.0)
                 end
@@ -1220,11 +1232,11 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
         Symbol.(TIER_KNIGHTIAN_KEYS),
         Symbol.(TIER_PERCEPTION_KEYS),
         Symbol.(CONFIDENCE_OUTCOME_KEYS),
-    ))
+   ))
     CSV.write(joinpath(output_dir, "per_run_data.csv"), run_df)
 
-    # 3. Survival trajectories. Guard against empty trajectory dict
-    # (zero successful runs) and missing tier keys (partial-batch case).
+ # 3. Survival trajectories. v3.5.19: guard against empty trajectory dict
+ # (zero successful runs) and missing tier keys (partial-batch case).
     trajectories = summary["mean_trajectories"]
     if !isempty(trajectories) &&
        all(haskey(trajectories, t) && !isempty(trajectories[t]) for t in AI_TIERS)
@@ -1235,17 +1247,17 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
             advanced=trajectories["advanced"],
             premium=trajectories["premium"],
             frontier_ai=trajectories["premium"],
-        )
+       )
         CSV.write(joinpath(output_dir, "survival_trajectories.csv"), traj_df)
     end
 
-    # 4. Treatment effects. Guard the std_error denominator so a
-    # zero-success batch yields 0.0 instead of Inf (sqrt(0)) and a single-
-    # success batch yields std/1 = 0.0 (we already collapsed std to 0.0
-    # for n<2 in aggregate_results).
-    # Paired run-level contrasts: mixed-tier runs share the same
-    # market seed across tiers; the inferential object is therefore the
-    # within-run tier-minus-none contrast, not each tier's marginal survival SE.
+ # 4. Treatment effects. v3.5.19: guard std_error denominator so a
+ # zero-success batch yields 0.0 instead of Inf (sqrt(0)) and a single-
+ # success batch yields std/1 = 0.0 (we already collapsed std to 0.0
+ # for n<2 in aggregate_results).
+ # v3.5.23: add paired run-level contrasts. Mixed-tier runs share the same
+ # market seed across tiers; the inferential object is therefore the
+ # within-run tier-minus-none contrast, not each tier's marginal survival SE.
     baseline = stats["none"]["mean_survival_rate"]
     paired_effects = get(summary, "paired_treatment_effects", paired_treatment_effects(all_results))
     effects = [(
@@ -1263,10 +1275,10 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
         unpaired_tier_std_error=stats[tier]["n_runs"] > 0 ?
             stats[tier]["std_survival_rate"] / sqrt(stats[tier]["n_runs"]) :
             0.0,
-    ) for tier in AI_TIERS]
+   ) for tier in AI_TIERS]
     CSV.write(joinpath(output_dir, "treatment_effects.csv"), DataFrame(effects))
 
-    # 5. Saturation diagnostics — single-row summary
+ # 5. Saturation diagnostics — single-row summary
     if haskey(summary, "saturation_summary")
         sat = summary["saturation_summary"]
         sat_row = [(
@@ -1283,11 +1295,11 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
             mean_mean_round_peak = get(sat, "mean_mean_round_peak", 0.0),
             mean_max_frac_above_K = get(sat, "mean_max_frac_above_K", 0.0),
             mean_mean_frac_above_K_per_round = get(sat, "mean_mean_frac_above_K_per_round", 0.0),
-        )]
+       )]
         CSV.write(joinpath(output_dir, "saturation_diagnostics.csv"), DataFrame(sat_row))
     end
 
-    # 6. Per-run saturation (for distribution plots)
+ # 6. Per-run saturation (for distribution plots)
     sat_rows = []
     for r in all_results
         r["status"] == "completed" || continue
@@ -1308,13 +1320,13 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
             mean_round_peak = s["mean_round_peak"],
             max_frac_above_K = s["max_frac_above_K"],
             mean_frac_above_K_per_round = s["mean_frac_above_K_per_round"],
-        ))
+       ))
     end
     if !isempty(sat_rows)
         CSV.write(joinpath(output_dir, "per_run_saturation.csv"), DataFrame(sat_rows))
     end
 
-    # 7. Decision/variance diagnostics
+ # 7. Decision/variance diagnostics
     if haskey(summary, "decision_diagnostics_summary")
         diag = summary["decision_diagnostics_summary"]
         diag_row = [(
@@ -1354,7 +1366,7 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
             mean_market_ai_herding_intensity = get(diag, "mean_market_ai_herding_intensity", 0.0),
             mean_market_ai_action_correlation = get(diag, "mean_market_ai_action_correlation", 0.0),
             mean_market_combo_reuse_pressure = get(diag, "mean_market_combo_reuse_pressure", 0.0),
-        )]
+       )]
         CSV.write(joinpath(output_dir, "decision_diagnostics.csv"), DataFrame(diag_row))
 
         component_rows = []
@@ -1368,7 +1380,7 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
                 metric = key,
                 mean = get(diag, "mean_" * key, 0.0),
                 std = get(diag, "std_" * key, 0.0),
-            ))
+           ))
         end
         if !isempty(component_rows)
             CSV.write(joinpath(output_dir, "knightian_component_diagnostics.csv"), DataFrame(component_rows))
@@ -1385,13 +1397,13 @@ function save_results(summary::Dict, all_results::AbstractVector{<:AbstractDict}
                 metric = key,
                 mean = get(diag, "mean_" * key, 0.0),
                 std = get(diag, "std_" * key, 0.0),
-            ))
+           ))
         end
         if !isempty(perception_component_rows)
             CSV.write(
                 joinpath(output_dir, "perception_component_diagnostics.csv"),
                 DataFrame(perception_component_rows),
-            )
+           )
         end
     end
 
@@ -1410,7 +1422,7 @@ function print_results(summary::Dict)
     println("  MIXED-TIER EXPERIMENT RESULTS (Table 3 Equivalent)")
     println("="^80)
 
-    # Panel A: Survival Rates
+ # Panel A: Survival Rates
     println("\n  A. Final Survival Rates")
     println("-"^60)
     for tier in AI_TIERS
@@ -1419,7 +1431,7 @@ function print_results(summary::Dict)
                 tier_display_label(tier), s["mean_survival_rate"]*100, s["std_survival_rate"]*100)
     end
 
-    # Panel B: Treatment Effects
+ # Panel B: Treatment Effects
     println("\n  B. Treatment Effects vs No AI")
     println("-"^60)
     for tier in ["basic", "advanced", "premium"]
@@ -1434,7 +1446,7 @@ function print_results(summary::Dict)
         end
     end
 
-    # Panel D & E: Activity Shares
+ # Panel D & E: Activity Shares
     println("\n  D. Innovation Activity Share")
     println("-"^60)
     for tier in AI_TIERS
@@ -1447,7 +1459,7 @@ function print_results(summary::Dict)
         @printf("    %-12s: %6.2f%%\n", tier_display_label(tier), stats[tier]["mean_explore_share"]*100)
     end
 
-    # Panel F: Survivor Wealth
+ # Panel F: Survivor Wealth
     println("\n  F. Survivor Wealth Percentiles")
     println("-"^60)
     @printf("    %-12s %12s %12s %12s\n", "Tier", "P50", "P90", "P95")
@@ -1457,14 +1469,14 @@ function print_results(summary::Dict)
                 tier_display_label(tier), s["mean_p50_capital"], s["mean_p90_capital"], s["mean_p95_capital"])
     end
 
-    # Panel H: Innovation Volume
+ # Panel H: Innovation Volume
     println("\n  H. Innovations Per Agent")
     println("-"^60)
     for tier in AI_TIERS
         @printf("    %-12s: %.3f\n", tier_display_label(tier), stats[tier]["mean_innovations_per_agent"])
     end
 
-    # Panel I: Capacity-saturation diagnostics
+ # Panel I: Capacity-saturation diagnostics
     if haskey(summary, "saturation_summary")
         sat = summary["saturation_summary"]
         println("\n  I. Capacity-Saturation Diagnostics (time-resolved across all rounds)")
@@ -1581,11 +1593,11 @@ function main()
             "N_ROUNDS" => N_ROUNDS,
             "N_RUNS" => N_RUNS,
             "OUTPUT_DIR" => OUTPUT_DIR,
-        ),
+       ),
         notes=Dict(
             "design" => "fixed equal mixed-tier",
-        ),
-    )
+       ),
+   )
 
     println("\nStarting $N_RUNS simulation runs...")
     start_time = time()
@@ -1602,10 +1614,10 @@ function main()
             @warn "Run $run_idx failed: $e"
         end
 
-        # Threads.atomic_add! returns the OLD value (Julia follows
-        # C __atomic_fetch_add semantics). Add 1 to get the post-increment
-        # count so the log prints 1..N (not 0..N-1) and the final N/N line
-        # actually fires.
+ # v3.5.19: Threads.atomic_add! returns the OLD value (Julia follows
+ # C __atomic_fetch_add semantics). Add 1 to get the post-increment
+ # count so the log prints 1..N (not 0..N-1) and the final N/N line
+ # actually fires.
         c = Threads.atomic_add!(completed, 1) + 1
         if c % 10 == 0 || c == N_RUNS
             @printf("  Completed %d/%d runs (%.1fs elapsed)\n", c, N_RUNS, time() - start_time)

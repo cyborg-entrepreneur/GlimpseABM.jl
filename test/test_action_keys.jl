@@ -1,10 +1,10 @@
 # Producer/consumer consistency check for action-dict keys.
 #
-# A review caught three "silent zero" bugs where a consumer read key X but
+# v2.3 review caught three "silent zero" bugs where a consumer read key X but
 # producers emitted key Y (e.g. "investment_amount" vs "amount"). Both names
 # look reasonable in isolation; the bug is invisible to a code reader.
 #
-# This test scans the source for every consumer key (`get(<dict>, "X", ...)`
+# This test scans the source for every consumer key (`get(<dict>, "X",...)`
 # and `<dict>["X"]` reads) and asserts that at least one producer somewhere
 # in the codebase writes that key. Catches typos automatically.
 
@@ -22,12 +22,12 @@ const SCAN_FILES = filter(f -> endswith(f, ".jl") && f != "action_keys.jl",
 # or are read with documented fallback defaults that don't depend on a
 # producer existing.
 const ALLOWED_CONSUMER_ONLY = Set([
-    # Market conditions / config — populated by market.jl get_market_conditions
-    # under different patterns (Symbol keys, struct fields)
+ # Market conditions / config — populated by market.jl get_market_conditions
+ # under different patterns (Symbol keys, struct fields)
     "regime", "uncertainty_state", "volatility", "regime_return_multiplier",
     "regime_failure_multiplier", "avg_competition", "sector_clearing_index",
-    "tier_invest_share", "boom_streak",
-    # Perception payload — populated by uncertainty.jl perceive_uncertainty
+    "tier_invest_share",
+ # Perception payload — populated by uncertainty.jl perceive_uncertainty
     "actor_ignorance", "practical_indeterminism", "agentic_novelty",
     "competitive_recursion", "decision_confidence", "knowledge_signal",
     "execution_risk", "innovation_signal", "competition_signal",
@@ -36,30 +36,36 @@ const ALLOWED_CONSUMER_ONLY = Set([
     "recursion_level", "opportunity_interest", "opportunity_sentiment",
     "sector_sentiment", "peer_roi_gap", "ai_adoption_pressure",
     "ai_distribution",
-    # Optional config-driven fields with documented fallback defaults
+ # Optional config-driven fields with documented fallback defaults
     "info_quality", "info_breadth", "per_use_cost",
-    # Innovation outcome details (subdict of action)
+ # TraitDistribution params consumed by utils.jl sample_trait with a
+ # documented fallback (1.0). No default trait uses the lognormal spec
+ # since the 2026-06-09 innovativeness respecification, so no Dict-literal
+ # producer remains in src/, but the lognormal branch is a supported
+ # config option.
+    "sigma",
+ # Innovation outcome details (subdict of action)
     "chosen_opportunity_details", "innovation_details", "innovation_obj",
-    # Agent fields read via getattr-style get (not action dict)
+ # Agent fields read via getattr-style get (not action dict)
     "operating_cost_estimate", "primary_sector", "risk_tolerance",
-    # Recovery / fallback only consulted when matured-outcome record is missing
+ # Recovery / fallback only consulted when matured-outcome record is missing
     "expected_return",
-    # Legacy alias for "amount" — kept as fallback in market.jl consumers
+ # Legacy alias for "amount" — kept as fallback in market.jl consumers
     "capital_deployed",
-    # market_conditions fields populated by market.jl get_market_conditions
+ # market_conditions fields populated by market.jl get_market_conditions
     "ai_tier_shares", "sector_demand_adjustments", "aggregate_clearing_ratio",
-    # MarketConditions is now a typed struct; field access replaces
-    # string-keyed reads. The consistency scan still sees these as orphan
-    # "consumer-only" keys because writes are now field assignments, not
-    # string-keyed dict entries. All allowlisted here — see
-    # market_conditions.jl for the authoritative schema.
+ # v3.0: MarketConditions is now a typed struct; field access replaces
+ # string-keyed reads. The consistency scan still sees these as orphan
+ # "consumer-only" keys because writes are now field assignments, not
+ # string-keyed dict entries. All allowlisted here — see
+ # market_conditions.jl for the authoritative schema.
     "trend", "momentum", "n_opportunities", "exploration_activity",
     "crowding_metrics", "combo_hhi", "crowding_index", "extras",
-    # Phase 1 of dict→struct migration: OpportunityEvaluation is now a typed
-    # struct (models.jl). These keys were previously consumed via dict access
-    # on the eval_record returned from evaluate_portfolio_opportunities;
-    # consumers now use field access (best_eval.final_score etc.) so the
-    # scanner no longer sees matching producer entries.
+ # Phase 1 of dict→struct migration: OpportunityEvaluation is now a typed
+ # struct (models.jl). These keys were previously consumed via dict access
+ # on the eval_record returned from evaluate_portfolio_opportunities;
+ # consumers now use field access (best_eval.final_score etc.) so the
+ # scanner no longer sees matching producer entries.
     "final_score", "competition_at_evaluation",
 ])
 
@@ -69,17 +75,17 @@ end
 
 function extract_consumer_keys(src::String)::Set{String}
     keys = Set{String}()
-    # Pattern A: get(<anything>, "key", ...)
+ # Pattern A: get(<anything>, "key",...)
     for m in eachmatch(r"\bget\s*\(\s*[A-Za-z_][\w\.\[\]]*\s*,\s*\"([a-z_][a-z_0-9]*)\"", src)
         push!(keys, m.captures[1])
     end
-    # Pattern B: get!(<anything>, "key", ...)
+ # Pattern B: get!(<anything>, "key",...)
     for m in eachmatch(r"\bget!\s*\(\s*[A-Za-z_][\w\.\[\]]*\s*,\s*\"([a-z_][a-z_0-9]*)\"", src)
         push!(keys, m.captures[1])
     end
-    # Pattern C: <dict>["key"] (read in any context, including assign — we'll
-    # trim down by also collecting writes, then any key with a write is fine).
-    # Match anything ending in ["key"] regardless of bracket count quirks
+ # Pattern C: <dict>["key"] (read in any context, including assign — we'll
+ # trim down by also collecting writes, then any key with a write is fine).
+ # Match anything ending in ["key"] regardless of bracket count quirks
     for m in eachmatch(r"\[\s*\"([a-z_][a-z_0-9]*)\"\s*\]", src)
         push!(keys, m.captures[1])
     end
@@ -88,11 +94,11 @@ end
 
 function extract_producer_keys(src::String)::Set{String}
     keys = Set{String}()
-    # Pattern A: <dict>["key"] = value
+ # Pattern A: <dict>["key"] = value
     for m in eachmatch(r"\[\s*\"([a-z_][a-z_0-9]*)\"\s*\]\s*=", src)
         push!(keys, m.captures[1])
     end
-    # Pattern B: "key" => value  (Dict literal entry)
+ # Pattern B: "key" => value (Dict literal entry)
     for m in eachmatch(r"\"([a-z_][a-z_0-9]*)\"\s*=>\s*", src)
         push!(keys, m.captures[1])
     end
@@ -110,7 +116,7 @@ end
         union!(all_producers, extract_producer_keys(src))
     end
 
-    # Every key consumed must either be produced somewhere or be on the allowlist.
+ # Every key consumed must either be produced somewhere or be on the allowlist.
     orphan_keys = setdiff(all_consumers, all_producers, ALLOWED_CONSUMER_ONLY)
 
     if !isempty(orphan_keys)

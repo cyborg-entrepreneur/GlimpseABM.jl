@@ -45,7 +45,7 @@ function load_dataframe_arrow(path::String)::DataFrame
 end
 
 """
-Save DataFrame to CSV format.
+Save DataFrame to CSV format (Python-compatible).
 
 Delegates to CSV.jl so values containing commas, newlines, or double quotes
 are properly RFC-4180 quoted. A naive writer that joined `string(v)` with

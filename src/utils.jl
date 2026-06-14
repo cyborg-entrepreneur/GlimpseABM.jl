@@ -1,5 +1,7 @@
 """
 Utility functions for GlimpseABM.jl
+
+Port of: glimpse_abm/utils.py
 """
 
 using Random
@@ -51,8 +53,11 @@ Sample all traits for an agent based on configuration.
 """
 function sample_all_traits(config::EmergentConfig; rng::Random.AbstractRNG = Random.default_rng())::Dict{String,Float64}
     traits = Dict{String,Float64}()
-    for (trait_name, dist_spec) in config.TRAIT_DISTRIBUTIONS
-        traits[trait_name] = sample_trait(dist_spec; rng=rng)
+    # Sample in sorted-key order so RNG consumption does not depend on Dict
+    # hash order, which can silently change between Julia versions and break
+    # seeded reproducibility.
+    for trait_name in sort!(collect(keys(config.TRAIT_DISTRIBUTIONS)))
+        traits[trait_name] = sample_trait(config.TRAIT_DISTRIBUTIONS[trait_name]; rng=rng)
     end
     return traits
 end
@@ -241,7 +246,8 @@ function logistic(x::Float64; k::Float64 = 1.0, x0::Float64 = 0.0)::Float64
 end
 
 """
-Numerically stable sigmoid function used throughout the uncertainty calculations.
+Numerically stable sigmoid function.
+Matches Python's stable_sigmoid for uncertainty calculations.
 """
 function stable_sigmoid(x::Float64)::Float64
     if !isfinite(x)
