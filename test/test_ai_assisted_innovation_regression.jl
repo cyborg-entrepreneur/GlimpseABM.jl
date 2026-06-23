@@ -37,7 +37,7 @@ end
         ai_assisted=false,
         ai_level_used="none",
         rng=MersenneTwister(7),
-   )
+    )
     assisted = GlimpseABM.create_innovation(
         engine,
         pieces,
@@ -48,7 +48,7 @@ end
         ai_domains_used=["technical_assessment"],
         ai_level_used="premium",
         rng=MersenneTwister(7),
-   )
+    )
 
     @test assisted.quality == human.quality
 end
@@ -60,7 +60,7 @@ end
         "trait_momentum" => 0.1,
         "innovativeness" => 0.5,
         "exploration_tendency" => 0.5,
-   )
+    )
     market_conditions = test_market_conditions(volatility=0.1, round=1)
 
     human_type = GlimpseABM.determine_innovation_type(
@@ -70,7 +70,7 @@ end
         market_conditions;
         ai_assisted=false,
         rng=MersenneTwister(13),
-   )
+    )
     assisted_type = GlimpseABM.determine_innovation_type(
         engine,
         pieces,
@@ -78,7 +78,7 @@ end
         market_conditions;
         ai_assisted=true,
         rng=MersenneTwister(13),
-   )
+    )
 
     @test assisted_type == human_type
 end
@@ -102,7 +102,7 @@ end
         nothing,
         "none";
         rng=MersenneTwister(1),
-   )
+    )
     premium_combo = GlimpseABM.select_knowledge_combination(
         engine,
         accessible,
@@ -111,7 +111,7 @@ end
         nothing,
         "premium";
         rng=MersenneTwister(1),
-   )
+    )
 
     @test [k.id for k in premium_combo] == [k.id for k in none_combo]
 end
@@ -138,7 +138,7 @@ end
             primary_sector="tech",
             fixed_ai_level=tier,
             rng=MersenneTwister(11),
-       )
+        )
         for key in keys(agent.traits)
             agent.traits[key] = 1.0
         end
@@ -152,7 +152,7 @@ end
             1;
             ai_level=tier,
             rng=MersenneTwister(11),
-       )
+        )
         return innovation, reuse_signature
     end
 
@@ -176,7 +176,7 @@ end
         round_created=1,
         creator_id=1,
         ai_assisted=false,
-   )
+    )
     assisted = Innovation(
         id="assisted_potential_probe",
         type="radical",
@@ -188,7 +188,7 @@ end
         ai_assisted=true,
         ai_domains_used=["technical_assessment"],
         ai_level_used="premium",
-   )
+    )
 
     @test GlimpseABM.calculate_potential(assisted, market_conditions) ==
           GlimpseABM.calculate_potential(human, market_conditions)

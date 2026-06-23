@@ -40,7 +40,7 @@ function disconfirmation_fixture(;
         "ai_analysis_domain" => "market_analysis",
         "success" => capital_returned > investment_amount,
         "ai_contains_hallucination" => hidden_hallucination,
-   )
+    )
 
     result = GlimpseABM._apply_matured_ai_learning!(sim, agent, matured)
     return result, agent, sim
@@ -52,13 +52,13 @@ end
         estimated_return=2.0,
         capital_returned=20.0,
         ai_confidence=0.95,
-   )
+    )
     true_result, true_agent, true_sim = disconfirmation_fixture(
         hidden_hallucination=true,
         estimated_return=2.0,
         capital_returned=20.0,
         ai_confidence=0.95,
-   )
+    )
 
     @test false_result.hidden_hallucination === false
     @test true_result.hidden_hallucination === true
@@ -84,7 +84,7 @@ end
         estimated_return=2.0,
         capital_returned=20.0,
         ai_confidence=0.95,
-   )
+    )
 
     @test result.suspected_ai_failure
     @test agent.ai_learning.hallucination_experiences["market_analysis"] == 1
@@ -103,13 +103,13 @@ end
         estimated_return=1.0,
         capital_returned=98.0,
         ai_confidence=0.95,
-   )
+    )
     true_result, true_agent, true_sim = disconfirmation_fixture(
         hidden_hallucination=true,
         estimated_return=1.0,
         capital_returned=98.0,
         ai_confidence=0.95,
-   )
+    )
 
     @test !false_result.suspected_ai_failure
     @test !true_result.suspected_ai_failure
@@ -131,14 +131,14 @@ end
         capital_returned=80.0,
         ai_confidence=0.95,
         recent_accuracy=Float64[],
-   )
+    )
     repeated_miss_result, repeated_agent, _ = disconfirmation_fixture(
         hidden_hallucination=false,
         estimated_return=1.6,
         capital_returned=80.0,
         ai_confidence=0.95,
         recent_accuracy=[0.0, 0.0, 0.1, 0.0, 0.1],
-   )
+    )
 
     @test repeated_miss_result.disconfirmation_score > clean_result.disconfirmation_score
     @test !clean_result.suspected_ai_failure
@@ -152,13 +152,13 @@ end
         estimated_return=2.0,
         capital_returned=20.0,
         ai_confidence=0.95,
-   )
+    )
     events = sim.uncertainty_env.ai_uncertainty_signals["observable_disconfirmation_events"]
     @test length(events) == 1
     @test events[1]["ai_assisted"] === true
 end
 
-# ── F1 (the design notes 2026-06-09): raw instrument estimate drives scoring ────
+# ── F1 (engine invariants): raw instrument estimate drives scoring ────
 
 function f1_fixture(matured_extra::Dict{String,Any}; ai_level::String = "premium")
     config = EmergentConfig(N_AGENTS=1, N_ROUNDS=1, RANDOM_SEED=919)
@@ -178,14 +178,14 @@ function f1_fixture(matured_extra::Dict{String,Any}; ai_level::String = "premium
         "ai_analysis_domain" => "market_analysis",
         "success" => false,
         "ai_contains_hallucination" => false,
-   ), matured_extra)
+    ), matured_extra)
     result = GlimpseABM._apply_matured_ai_learning!(sim, agent, matured)
     return result, agent, sim
 end
 
 @testset "F1: disconfirmation is scored against the RAW instrument estimate" begin
- # Same raw instrument estimate, different (shaded) decision estimates ⇒
- # identical scoring: the decision-basis value is ignored by the scorer.
+    # Same raw instrument estimate, different (shaded) decision estimates ⇒
+    # identical scoring: the decision-basis value is ignored by the scorer.
     shaded_a, _, _ = f1_fixture(Dict{String,Any}(
         "estimated_return" => 1.2, "instrument_estimated_return" => 2.0,
         "has_return_estimate" => true))
@@ -195,25 +195,25 @@ end
     @test shaded_a.disconfirmation_score == shaded_b.disconfirmation_score
     @test shaded_a.suspected_ai_failure == shaded_b.suspected_ai_failure
 
- # Different raw estimates DO change the score (the raw key is live, not
- # decorative).
+    # Different raw estimates DO change the score (the raw key is live, not
+    # decorative).
     raw_low, _, _ = f1_fixture(Dict{String,Any}(
         "estimated_return" => 1.2, "instrument_estimated_return" => 0.2,
         "has_return_estimate" => true))
     @test raw_low.disconfirmation_score != shaded_a.disconfirmation_score
 
- # Legacy records without the raw key fall back to estimated_return
- # (pre-split behavior) — and the recorded event matches a fixture that
- # stores the same value as the raw key.
+    # Legacy records without the raw key fall back to estimated_return
+    # (pre-split behavior) — and the recorded event matches a fixture that
+    # stores the same value as the raw key.
     legacy, _, legacy_sim = f1_fixture(Dict{String,Any}("estimated_return" => 2.0))
     @test legacy.disconfirmation_score == shaded_a.disconfirmation_score
     @test length(legacy_sim.uncertainty_env.ai_uncertainty_signals["observable_disconfirmation_events"]) == 1
 end
 
 @testset "F1: outcomes with NO estimate are excluded (no perfect-forecast dilution)" begin
- # has_return_estimate=false (production marker for an investment that
- # never stored an estimate): no exposure recorded, no AI-trust learning —
- # previously the ret_multiple fallback scored these as PERFECT forecasts.
+    # has_return_estimate=false (production marker for an investment that
+    # never stored an estimate): no exposure recorded, no AI-trust learning —
+    # previously the ret_multiple fallback scored these as PERFECT forecasts.
     result, agent, sim = f1_fixture(Dict{String,Any}(
         "estimated_return" => 0.2,   # == ret_multiple (the old dilution path)
         "has_return_estimate" => false))
@@ -223,9 +223,9 @@ end
     @test isempty(sim.uncertainty_env.ai_uncertainty_signals["observable_disconfirmation_events"])
     @test isempty(get(agent.ai_learning.accuracy_estimates, "market_analysis", Float64[]))
 
- # The maturity path itself produces the marker: an investment without any
- # estimate keys matures into has_return_estimate=false and contributes NO
- # estimation-error observation to the agent's uncertainty metrics.
+    # The maturity path itself produces the marker: an investment without any
+    # estimate keys matures into has_return_estimate=false and contributes NO
+    # estimation-error observation to the agent's uncertainty metrics.
     config = EmergentConfig(N_AGENTS=1, N_ROUNDS=1, RANDOM_SEED=920)
     config.enable_round_logging = false
     GlimpseABM.initialize!(config)
@@ -243,17 +243,17 @@ end
         "ai_level" => "premium",
         "ai_label" => "premium",
         "sector" => opp.sector,
-   ))
+    ))
     errs_before = length(agent2.uncertainty_metrics.estimation_errors)
     matured = GlimpseABM.process_matured_investments!(agent2, sim2.market, 1)
     @test length(matured) == 1
     @test matured[1]["has_return_estimate"] === false
     @test length(agent2.uncertainty_metrics.estimation_errors) == errs_before
- # Returns/competition tracking (estimate-independent) still recorded.
+    # Returns/competition tracking (estimate-independent) still recorded.
     @test !isempty(agent2.uncertainty_metrics.return_history)
 
- # With an estimate the maturity path emits the raw key + marker and the
- # estimation error IS recorded against the raw value.
+    # With an estimate the maturity path emits the raw key + marker and the
+    # estimation error IS recorded against the raw value.
     sim3 = EmergentSimulation(config=config, seed=921)
     agent3 = sim3.agents[1]
     opp3 = Opportunity(id="f1_with_estimate", latent_return_potential=1.2,
@@ -270,7 +270,7 @@ end
         "sector" => opp3.sector,
         "estimated_return" => 0.9,                 # decision basis (shaded)
         "instrument_estimated_return" => 1.6,      # raw instrument value
-   ))
+    ))
     matured3 = GlimpseABM.process_matured_investments!(agent3, sim3.market, 1)
     @test matured3[1]["has_return_estimate"] === true
     @test matured3[1]["instrument_estimated_return"] == 1.6
@@ -296,7 +296,7 @@ end
     @test inv["estimated_return"] == 0.8                  # decision basis (sizing/scoring)
     @test inv["instrument_estimated_return"] == 1.7       # raw instrument value
     @test outcome["instrument_estimated_return"] == 1.7
- # Without the kwarg the two coincide (no-S1 case / legacy callers).
+    # Without the kwarg the two coincide (no-S1 case / legacy callers).
     opp2 = Opportunity(id="f1_invest2", latent_return_potential=1.2,
                        latent_failure_potential=0.4, complexity=0.4,
                        sector="tech", competition=0.0, discovered=true)
@@ -307,17 +307,17 @@ end
 end
 
 @testset "No-AI matured outcomes feed the symmetric forecast-disconfirmation channel" begin
- # Symmetrized channel (ETP editor robustness check / open decision #2): a
- # matured outcome with a large forecast miss produces an exposure even
- # without AI. The event is flagged as the human baseline population and
- # AI-trust learning stays untouched (there is no AI to attribute it to).
+    # Symmetrized channel (engine invariant / open decision #2): a
+    # matured outcome with a large forecast miss produces an exposure even
+    # without AI. The event is flagged as the human baseline population and
+    # AI-trust learning stays untouched (there is no AI to attribute it to).
     result, agent, sim = disconfirmation_fixture(
         hidden_hallucination=false,
         estimated_return=2.0,
         capital_returned=20.0,
         ai_confidence=0.5,
         ai_level="none",
-   )
+    )
 
     @test result.applied === false
     @test result.was_accurate === nothing
@@ -329,8 +329,8 @@ end
     @test events[1]["suspected_ai_failure"] === true
     @test events[1]["severity"] > 0.0
 
- # The exposure flows into the rolling stats as baseline, never as AI:
- # a no-AI population yields a nonzero OVERALL rate with zero excess.
+    # The exposure flows into the rolling stats as baseline, never as AI:
+    # a no-AI population yields a nonzero OVERALL rate with zero excess.
     stats = GlimpseABM._rolling_ai_signal_stats(sim.uncertainty_env)
     @test stats.exposure_count == 1
     @test stats.baseline_exposure_count == 1
@@ -341,7 +341,7 @@ end
     @test stats.ai_rate == 0.0
     @test stats.excess_ai_rate == 0.0
 
- # No AI-trust learning or hallucination-penalty mechanics for no-AI agents.
+    # No AI-trust learning or hallucination-penalty mechanics for no-AI agents.
     @test agent.ai_learning.hallucination_experiences["market_analysis"] == 0
     @test agent.ai_learning.domain_trust["market_analysis"] == 0.5
     @test agent.resources.knowledge["retail"] == 0.8

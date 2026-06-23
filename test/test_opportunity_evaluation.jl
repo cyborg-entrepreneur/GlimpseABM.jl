@@ -11,19 +11,19 @@ include("test_helpers.jl")
         latent_return_potential=1.8,
         latent_failure_potential=0.25,
         complexity=0.5,
-   )
+    )
 
- # Default keyword constructor produces typed-zero AI fields when ai_info
- # is nothing (matches the dict producer that previously omitted those keys
- # entirely when no Information was available).
+    # Default keyword constructor produces typed-zero AI fields when ai_info
+    # is nothing (matches the dict producer that previously omitted those keys
+    # entirely when no Information was available).
     ev = OpportunityEvaluation(;
         opportunity=opp,
         final_score=1.42,
         ai_level_used="basic",
         estimated_return=1.7,
-   )
+    )
 
- # Type invariants
+    # Type invariants
     @test ev isa OpportunityEvaluation
     @test ev.opportunity === opp
     @test ev.final_score == 1.42
@@ -35,11 +35,11 @@ include("test_helpers.jl")
     @test ev.ai_confidence == 0.0
     @test ev.ai_actual_accuracy == 0.0
 
- # Immutability — the struct must not be reassignable
+    # Immutability — the struct must not be reassignable
     @test_throws ErrorException ev.final_score = 2.0
 
- # Dict-shim reads (Phase 1 of migration; some diagnostic tests still use
- # dict-style access)
+    # Dict-shim reads (Phase 1 of migration; some diagnostic tests still use
+    # dict-style access)
     @test ev["opportunity"] === opp
     @test ev["final_score"] == 1.42
     @test get(ev, "final_score", 999.0) == 1.42
@@ -50,14 +50,14 @@ include("test_helpers.jl")
     @test !haskey(ev, "nonexistent_key")
     @test_throws KeyError ev["nonexistent_key"]
 
- # With AI info populated, the AI fields propagate
+    # With AI info populated, the AI fields propagate
     info = Information(
         estimated_return=1.65,
         estimated_uncertainty=0.18,
         confidence=0.72,
         actual_accuracy=0.81,
         contains_hallucination=true,
-   )
+    )
     ev_ai = OpportunityEvaluation(;
         opportunity=opp,
         final_score=2.1,
@@ -68,7 +68,7 @@ include("test_helpers.jl")
         ai_contains_hallucination=info.contains_hallucination,
         ai_confidence=Float64(info.confidence),
         ai_actual_accuracy=Float64(info.actual_accuracy),
-   )
+    )
     @test ev_ai.ai_info === info
     @test ev_ai.ai_contains_hallucination === true
     @test ev_ai.ai_confidence == 0.72
@@ -77,9 +77,9 @@ include("test_helpers.jl")
 end
 
 @testset "OpportunityEvaluation sort order matches pre-struct behavior" begin
- # Regression test for the sort! call inside evaluate_portfolio_opportunities:
- # the dict producer sorted descending by "final_score"; the struct producer
- # must sort descending by.final_score, producing the identical permutation.
+    # Regression test for the sort! call inside evaluate_portfolio_opportunities:
+    # the dict producer sorted descending by "final_score"; the struct producer
+    # must sort descending by .final_score, producing the identical permutation.
     opps = [
         Opportunity(id="a", latent_return_potential=1.0, latent_failure_potential=0.1, complexity=0.3),
         Opportunity(id="b", latent_return_potential=1.0, latent_failure_potential=0.1, complexity=0.3),
@@ -92,7 +92,7 @@ end
             final_score=scores[i],
             ai_level_used="none",
             estimated_return=1.0,
-       )
+        )
         for i in 1:3
     ]
 
@@ -101,7 +101,7 @@ end
     @test [e.final_score for e in evals] == [2.0, 1.0, 0.5]
 end
 
-@testset "AI mechanism hooks fire on runtime paths" begin
+@testset "Reviewer-facing AI mechanism hooks fire on runtime paths" begin
     config = EmergentConfig()
     GlimpseABM.initialize!(config)
     config.AI_EXECUTION_SUCCESS_MULTIPLIERS["premium"] = 4.0
@@ -120,7 +120,7 @@ end
         sector="tech",
         competition=10.0,
         config=config,
-   )
+    )
     market_conditions = test_market_conditions(volatility=0.1)
 
     baseline = GlimpseABM.realized_return(opp, market_conditions, "none"; rng=MersenneTwister(123))
@@ -133,7 +133,7 @@ end
         "competence" => 0.9,
         "market_awareness" => 0.9,
         "ai_trust" => 0.9,
-   )
+    )
     knowledge = Dict("tech" => 0.9)
     info = GlimpseABM.get_information(
         info_system,
@@ -143,7 +143,7 @@ end
         agent_traits=traits,
         sector_knowledge=knowledge,
         rng=MersenneTwister(321),
-   )
+    )
     @test isapprox(info.hidden_factors["info_quality_used"], 0.99; atol=1e-12)
     @test info.hidden_factors["ai_complementarity_delta"] > 0.3
 
@@ -153,11 +153,11 @@ end
     @test isapprox(
         GlimpseABM.ai_analysis_call_cost(agent, "basic"; opportunity=opp),
         config.AI_LEVELS["basic"].per_use_cost * (1.0 + opp.complexity),
-   )
+    )
     @test isapprox(
         GlimpseABM.ai_analysis_call_cost(agent, "advanced"; opportunity=opp),
         config.AI_LEVELS["advanced"].per_use_cost * opp.complexity,
-   )
+    )
     @test GlimpseABM.strategic_anticipation_multiplier(
         agent,
         opp,
@@ -165,7 +165,7 @@ end
         config.AI_LEVELS["premium"].info_quality,
         empty_perception(),
         5,
-   ) < 0.8
+    ) < 0.8
     @test GlimpseABM.strategic_anticipation_multiplier(
         agent,
         opp,
@@ -173,7 +173,7 @@ end
         0.25,
         empty_perception(),
         5,
-   ) == 1.0
+    ) == 1.0
 
     @test GlimpseABM.behavior_ai_level(config, "premium") == "premium"
     @test GlimpseABM.counts_as_ai_use(config, "premium") === true
@@ -218,7 +218,7 @@ end
         complexity=0.6,
         sector="tech",
         config=config,
-   )
+    )
     market_conditions = test_market_conditions(volatility=0.1)
     expected_multiple = GlimpseABM.realized_return(opp, market_conditions, "premium"; rng=MersenneTwister(42))
 
@@ -232,7 +232,7 @@ end
         "opportunity" => opp,
         "ai_level" => "premium",
         "estimated_return" => 1.5,
-   ))
+    ))
     market = MarketEnvironment(config; rng=MersenneTwister(10))
 
     outcomes = GlimpseABM.process_matured_investments!(
@@ -240,7 +240,7 @@ end
         market,
         1;
         market_conditions=market_conditions,
-   )
+    )
 
     @test length(outcomes) == 1
     @test outcomes[1]["ai_level"] == "premium"

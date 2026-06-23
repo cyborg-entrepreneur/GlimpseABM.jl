@@ -32,8 +32,8 @@ end
 
     @testset "equity threshold is tier-invariant" begin
         none, premium = _matched_agent_pair(config)
- # Above tech liquidity threshold ($1.95M) but below the global equity
- # ratio floor: 0.40 * $5M = $2.0M.
+        # Above tech liquidity threshold ($1.95M) but below the global equity
+        # ratio floor: 0.40 * $5M = $2.0M.
         GlimpseABM.set_capital!(none, 1_975_000.0)
         GlimpseABM.set_capital!(premium, 1_975_000.0)
 
@@ -45,9 +45,9 @@ end
 end
 
 @testset "SURVIVAL_COUNTS_INFLIGHT: in-flight capital counts toward net worth" begin
- # initial_capital = $5M -> equity floor = 0.40 * $5M = $2M; tech liquidity
- # floor ~ $1.95M. Deployed-but-maturing (in-flight) capital should lift
- # effective net worth under the toggle, flipping the survival outcome.
+    # initial_capital = $5M  ->  equity floor = 0.40 * $5M = $2M; tech liquidity
+    # floor ~ $1.95M. Deployed-but-maturing (in-flight) capital should lift
+    # effective net worth under the toggle, flipping the survival outcome.
     function _inflight_agent(; cash::Float64, inflight::Float64, counts_inflight::Bool)
         cfg = EmergentConfig(N_AGENTS=2, N_ROUNDS=1, RANDOM_SEED=1)
         GlimpseABM.initialize!(cfg)
@@ -63,7 +63,7 @@ end
     end
 
     @testset "liquidity leg" begin
- # $1M cash is below the liquidity floor; $4M in-flight lifts net worth to $5M.
+        # $1M cash is below the liquidity floor; $4M in-flight lifts net worth to $5M.
         @test GlimpseABM.check_survival!(
             _inflight_agent(cash=1_000_000.0, inflight=4_000_000.0, counts_inflight=true), 1) === true
         a_off = _inflight_agent(cash=1_000_000.0, inflight=4_000_000.0, counts_inflight=false)
@@ -72,8 +72,8 @@ end
     end
 
     @testset "equity leg" begin
- # $1.975M cash clears the liquidity floor but is below the $2M equity floor
- # (ratio 0.395 < 0.40); $1M in-flight lifts the ratio above the floor.
+        # $1.975M cash clears the liquidity floor but is below the $2M equity floor
+        # (ratio 0.395 < 0.40); $1M in-flight lifts the ratio above the floor.
         @test GlimpseABM.check_survival!(
             _inflight_agent(cash=1_975_000.0, inflight=1_000_000.0, counts_inflight=true), 1) === true
         a_off = _inflight_agent(cash=1_975_000.0, inflight=1_000_000.0, counts_inflight=false)

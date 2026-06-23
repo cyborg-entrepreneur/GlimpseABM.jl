@@ -10,44 +10,44 @@ using DataFrames
 @testset "GlimpseABM.jl" begin
 
     @testset "Configuration" begin
- # Test default config creation
+        # Test default config creation
         config = EmergentConfig()
         @test config.N_AGENTS == 1000
         @test config.N_ROUNDS == 120
         @test config.RANDOM_SEED == 42
 
- # Test sectors populated
+        # Test sectors populated
         GlimpseABM.initialize!(config)
         @test !isempty(config.SECTORS)
         @test "tech" in config.SECTORS
 
- # Test scaled opportunities
+        # Test scaled opportunities
         n_opps = GlimpseABM.get_scaled_opportunities(config, 1000)
         @test n_opps >= config.MIN_OPPORTUNITIES
     end
 
     @testset "Models" begin
- # Test Opportunity creation
+        # Test Opportunity creation
         opp = Opportunity(
             id="test_opp_1",
             latent_return_potential=1.5,
             latent_failure_potential=0.3,
             complexity=0.5
-       )
+        )
         @test opp.id == "test_opp_1"
         @test opp.latent_return_potential == 1.5
         @test opp.discovered == false
 
- # Test Information creation
+        # Test Information creation
         info = Information(
             estimated_return=1.2,
             estimated_uncertainty=0.3,
             confidence=0.8
-       )
+        )
         @test info.estimated_return == 1.2
         @test GlimpseABM.quality_score(info) > 0
 
- # Test Innovation creation
+        # Test Innovation creation
         innov = Innovation(
             id="innov_1",
             type="incremental",
@@ -56,10 +56,10 @@ using DataFrames
             quality=0.6,
             round_created=1,
             creator_id=1
-       )
+        )
         @test innov.novelty == 0.7
 
- # Test AILearningProfile
+        # Test AILearningProfile
         profile = AILearningProfile()
         @test haskey(profile.domain_trust, "market_analysis")
         @test profile.domain_trust["market_analysis"] == 0.5
@@ -71,18 +71,18 @@ using DataFrames
 
         rng = MersenneTwister(42)
 
- # Test agent creation
+        # Test agent creation
         agent = EmergentAgent(1, config; rng=rng)
         @test agent.id == 1
         @test agent.alive == true
         @test GlimpseABM.get_capital(agent) > 0
 
- # Test capital operations
+        # Test capital operations
         initial_capital = GlimpseABM.get_capital(agent)
         GlimpseABM.set_capital!(agent, initial_capital + 1000)
         @test GlimpseABM.get_capital(agent) == initial_capital + 1000
 
- # Test AI level
+        # Test AI level
         @test GlimpseABM.get_ai_level(agent) == "none"
         agent.fixed_ai_level = "premium"
         @test GlimpseABM.get_ai_level(agent) == "premium"
@@ -94,16 +94,16 @@ using DataFrames
 
         rng = MersenneTwister(42)
 
- # Test market creation
+        # Test market creation
         market = MarketEnvironment(config; rng=rng)
         @test market.market_regime == "normal"
         @test !isempty(market.opportunities)
 
- # Test get available opportunities
+        # Test get available opportunities
         opps = GlimpseABM.get_available_opportunities(market)
         @test !isempty(opps)
 
- # Test market conditions
+        # Test market conditions
         conditions = GlimpseABM.get_market_conditions(market)
         @test haskey(conditions, "regime")
         @test conditions["regime"] == "normal"
@@ -113,52 +113,52 @@ using DataFrames
         config = EmergentConfig()
         rng = MersenneTwister(42)
 
- # Test uncertainty environment creation
+        # Test uncertainty environment creation
         unc_env = KnightianUncertaintyEnvironment(config; rng=rng)
 
- # Test initial state
+        # Test initial state
         @test haskey(unc_env.actor_ignorance_state, "level")
         @test haskey(unc_env.practical_indeterminism_state, "level")
         @test haskey(unc_env.agentic_novelty_state, "level")
         @test haskey(unc_env.competitive_recursion_state, "level")
 
- # Test composite uncertainty
+        # Test composite uncertainty
         composite = GlimpseABM.get_composite_uncertainty(unc_env)
         @test composite >= 0.0
         @test composite <= 1.0
     end
 
     @testset "Simulation Mini Run" begin
- # Create minimal config for fast test
+        # Create minimal config for fast test
         config = EmergentConfig()
         config.N_AGENTS = 10
         config.N_ROUNDS = 5
         config.enable_round_logging = false
         GlimpseABM.initialize!(config)
 
- # Run simulation
+        # Run simulation
         sim = EmergentSimulation(
             config=config,
             output_dir="/tmp/glimpse_test",
             run_id="test_run",
             seed=42
-       )
+        )
 
         GlimpseABM.run!(sim)
 
- # Verify simulation ran
+        # Verify simulation ran
         @test sim.current_round == 5
         @test !isempty(sim.history)
 
- # Check some agents survived
+        # Check some agents survived
         survivors = count(a -> a.alive, sim.agents)
         @test survivors >= 0
 
- # Test history to DataFrame
+        # Test history to DataFrame
         df = GlimpseABM.history_to_dataframe(sim)
         @test nrow(df) == 5
 
- # Test summary stats
+        # Test summary stats
         stats = GlimpseABM.summary_stats(sim)
         @test haskey(stats, "final_survival_rate")
         @test stats["n_rounds"] == 5
@@ -168,31 +168,31 @@ using DataFrames
         config = EmergentConfig()
         rng = MersenneTwister(42)
 
- # Test trait sampling
+        # Test trait sampling
         traits = GlimpseABM.sample_all_traits(config; rng=rng)
         @test haskey(traits, "uncertainty_tolerance")
         @test traits["uncertainty_tolerance"] >= 0.0
         @test traits["uncertainty_tolerance"] <= 1.0
 
- # Test weighted choice
+        # Test weighted choice
         items = ["a", "b", "c"]
         weights = [0.7, 0.2, 0.1]
         choice = GlimpseABM.weighted_choice(items, weights; rng=rng)
         @test choice in items
 
- # Test HHI computation
+        # Test HHI computation
         shares = [0.5, 0.3, 0.2]
         hhi = GlimpseABM.compute_hhi(shares)
         @test hhi > 0.0
         @test hhi <= 1.0
 
- # Test normalize probs
+        # Test normalize probs
         probs = [2.0, 3.0, 5.0]
         normalized = GlimpseABM.normalize_probs(probs)
         @test isapprox(sum(normalized), 1.0)
     end
 
- # Run external regression tests (each in its own @testset)
+    # Run external regression tests (each in its own @testset)
     include("test_tier_divergence.jl")
     include("test_diagnostics.jl")
     include("test_action_keys.jl")
@@ -223,10 +223,12 @@ using DataFrames
     include("test_engine_invariants.jl")
     include("test_fixed_tier_assignment.jl")
     include("test_strategy_ladder.jl")
+    include("test_s2_component_edge.jl")
     include("test_open_action_space.jl")
     include("test_emergence_audit.jl")
     include("test_robustness_addendum_knobs.jl")
     include("test_opportunity_tail_clamp.jl")
+    include("test_robustness_wiring.jl")
 
 end
 

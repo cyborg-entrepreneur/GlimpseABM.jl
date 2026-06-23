@@ -14,7 +14,7 @@ using GlimpseABM
     market = MarketEnvironment(cfg; rng=MersenneTwister(42))
     mc = GlimpseABM.get_market_conditions(market)
 
- # Type invariants
+    # Type invariants
     @test mc isa MarketConditions
     @test mc.regime isa String
     @test mc.volatility isa Float64
@@ -30,24 +30,24 @@ using GlimpseABM
     @test mc.uncertainty_state isa Dict{String,Any}
     @test mc.extras isa Dict{String,Any}
 
- # Non-degenerate values in production path
+    # Non-degenerate values in production path
     @test isfinite(mc.avg_competition)
     @test isfinite(mc.volatility)
 
- # Immutability — catches accidental post-construction mutation
+    # Immutability — catches accidental post-construction mutation
     @test_throws ErrorException mc.regime = "crisis"
 
- # Dict-shim backward compat (for any straggling get(mc, "X", …) sites)
+    # Dict-shim backward compat (for any straggling get(mc, "X", …) sites)
     @test get(mc, "regime", "missing") == mc.regime
     @test get(mc, "nonexistent_key", 42) == 42
     @test haskey(mc, "regime")
     @test !haskey(mc, "nonexistent_key")
     @test mc["regime"] == mc.regime
 
- # uncertainty_state can be injected at construction. v3.3.3: snapshot is
- # deepcopied, so the struct holds a separate object with equal contents —
- # not the same reference. Mutating `us` after construction must NOT
- # mutate the snapshot.
+    # uncertainty_state can be injected at construction. v3.3.3: snapshot is
+    # deepcopied, so the struct holds a separate object with equal contents —
+    # not the same reference. Mutating `us` after construction must NOT
+    # mutate the snapshot.
     us = Dict{String,Any}("actor_ignorance" => Dict{String,Any}("level"=>0.5))
     mc2 = GlimpseABM.get_market_conditions(market; uncertainty_state=us)
     @test mc2.uncertainty_state !== us          # separate object

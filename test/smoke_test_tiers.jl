@@ -20,12 +20,12 @@ for tier in TIERS
         N_AGENTS=N_AGENTS,
         N_ROUNDS=N_ROUNDS,
         RANDOM_SEED=42,
-   )
+    )
     sim = EmergentSimulation(
         config=config,
         seed=42,
         initial_tier_distribution=Dict(tier => 1.0),
-   )
+    )
     GlimpseABM.run!(sim)
 
     n_alive = count(a -> get_capital(a) > 0, sim.agents)
@@ -44,9 +44,9 @@ for tier in TIERS
         survival = survival_rate,
         mean_cap = mean_cap,
         median_cap = median_cap,
-   )
+    )
 
- # Sanity bounds
+    # Sanity bounds
     @assert survival_rate >= 0.0 && survival_rate <= 1.0
     @assert mean_cap > 0
 end

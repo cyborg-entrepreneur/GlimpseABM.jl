@@ -20,7 +20,7 @@ using GlimpseABM
         "competence" => 0.6, "ai_trust" => 0.5, "exploration_tendency" => 0.4,
         "innovativeness" => 0.5, "uncertainty_tolerance" => 0.5,
         "analytical_ability" => 0.5, "risk_tolerance" => 0.5,
-   )
+    )
 
     perception = GlimpseABM.perceive_uncertainty(
         env, agent_traits, market.opportunities, mc;
@@ -28,7 +28,7 @@ using GlimpseABM
         agent_knowledge=Set(["tech"]),
         sector_knowledge=Dict("tech" => 0.5),
         action_history=String[],
-   )
+    )
 
     @test perception isa Perception
     @test perception.knowledge_signal isa KnowledgeSignal
@@ -44,24 +44,24 @@ using GlimpseABM
     @test perception.action_profile isa Dict{String,Float64}
     @test perception.decision_confidence isa Float64
 
- # Aliased "level" fields mirror their canonical fields
+    # Aliased "level" fields mirror their canonical fields
     @test perception.actor_ignorance.level == perception.actor_ignorance.ignorance_level
     @test perception.practical_indeterminism.level == perception.practical_indeterminism.indeterminism_level
     @test perception.agentic_novelty.level == perception.agentic_novelty.novelty_potential
     @test perception.competitive_recursion.level == perception.competitive_recursion.recursion_level
 
- # All "level" reads stay bounded
+    # All "level" reads stay bounded
     @test 0.0 <= perception.actor_ignorance.level <= 1.0
     @test 0.0 <= perception.practical_indeterminism.level <= 1.0
     @test 0.0 <= perception.agentic_novelty.level <= 1.0
     @test 0.0 <= perception.competitive_recursion.level <= 1.0
     @test 0.02 <= perception.decision_confidence <= 0.98
 
- # Immutability: top-level + nested
+    # Immutability: top-level + nested
     @test_throws ErrorException perception.decision_confidence = 0.5
     @test_throws ErrorException perception.actor_ignorance.level = 0.5
 
- # Dict-shim: get/getindex/haskey across nested structs
+    # Dict-shim: get/getindex/haskey across nested structs
     @test get(perception, "decision_confidence", 999.0) == perception.decision_confidence
     @test get(perception, "nonexistent_key", 42) == 42
     @test perception["actor_ignorance"] === perception.actor_ignorance
@@ -85,7 +85,7 @@ end
         Dict("tech" => 0.5),
         length(cfg.SECTORS),
         weights,
-   )
+    )
     expected_signals = [
         GlimpseABM._observable_opportunity_signal(opp, weights)
         for opp in visible
@@ -100,31 +100,31 @@ end
         Dict{String,Float64}(),
         length(cfg.SECTORS),
         weights,
-   )
+    )
     @test isempty(empty_context.opportunity_signals)
 end
 
 @testset "Perception snapshot isolation (v3.3.2 regression class)" begin
- # If perception.crowding_metrics holds a reference to the live
- # market_conditions.crowding_metrics dict, mutating the market later
- # in the round would silently change all already-cached Perception
- # objects. This was the v3.3.2 bug class for MarketConditions; we
- # explicitly snapshot-isolate crowding_metrics in uncertainty.jl when
- # constructing Perception.
+    # If perception.crowding_metrics holds a reference to the live
+    # market_conditions.crowding_metrics dict, mutating the market later
+    # in the round would silently change all already-cached Perception
+    # objects. This was the v3.3.2 bug class for MarketConditions; we
+    # explicitly snapshot-isolate crowding_metrics in uncertainty.jl when
+    # constructing Perception.
     cfg = EmergentConfig(N_AGENTS=10, N_ROUNDS=1, RANDOM_SEED=42)
     GlimpseABM.initialize!(cfg)
     market = MarketEnvironment(cfg; rng=MersenneTwister(42))
     env = KnightianUncertaintyEnvironment(cfg; rng=MersenneTwister(42))
     mc = GlimpseABM.get_market_conditions(market)
 
- # Seed crowding_metrics so we have a baseline to mutate after the fact
+    # Seed crowding_metrics so we have a baseline to mutate after the fact
     mc.crowding_metrics["sentinel_pre_perception"] = 0.123
 
     agent_traits = Dict{String,Float64}(
         "competence" => 0.5, "ai_trust" => 0.5, "exploration_tendency" => 0.5,
         "innovativeness" => 0.5, "uncertainty_tolerance" => 0.5,
         "analytical_ability" => 0.5, "risk_tolerance" => 0.5,
-   )
+    )
 
     perception = GlimpseABM.perceive_uncertainty(
         env, agent_traits, market.opportunities, mc;
@@ -132,13 +132,13 @@ end
         agent_knowledge=Set{String}(),
         sector_knowledge=Dict{String,Float64}(),
         action_history=String[],
-   )
+    )
 
     @test haskey(perception.crowding_metrics, "sentinel_pre_perception")
     @test perception.crowding_metrics["sentinel_pre_perception"] == 0.123
     @test perception.crowding_metrics !== mc.crowding_metrics  # different objects
 
- # Mutate the source dict AFTER perception is constructed
+    # Mutate the source dict AFTER perception is constructed
     mc.crowding_metrics["sentinel_post_perception"] = 0.999
     mc.crowding_metrics["sentinel_pre_perception"] = 99.0  # mutate in place
 
@@ -159,7 +159,7 @@ end
         "uncertainty_tolerance" => 0.5,
         "analytical_ability" => 0.5,
         "risk_tolerance" => 0.5,
-   )
+    )
 
     function perceived_with_prior(actor_prior, recursion_prior)
         env = KnightianUncertaintyEnvironment(cfg; rng=MersenneTwister(931))
@@ -173,8 +173,8 @@ end
                 "level" => recursion_prior,
                 "ai_action_correlation" => 0.6,
                 "combo_reuse_pressure" => 0.5,
-           ),
-       )
+            ),
+        )
         return GlimpseABM.perceive_uncertainty(
             env,
             traits,
@@ -185,7 +185,7 @@ end
             sector_knowledge=Dict("tech" => 0.5),
             action_history=String["invest", "explore"],
             agent_id=1,
-       )
+        )
     end
 
     low = perceived_with_prior(0.15, 0.10)
@@ -212,7 +212,7 @@ end
         risk_tolerance=0.5,
         hallucination_rate=0.0,
         info_quality=0.25,
-   )
+    )
     high_info_confidence = GlimpseABM._decision_confidence_from_components(
         total_uncertainty=0.42,
         competence_trait=0.65,
@@ -223,7 +223,7 @@ end
         risk_tolerance=0.5,
         hallucination_rate=0.0,
         info_quality=0.97,
-   )
+    )
 
     @test isapprox(high_info_confidence, low_info_confidence; atol=1e-12)
 end
@@ -256,7 +256,7 @@ end
         "uncertainty_tolerance" => 0.53,
         "analytical_ability" => 0.61,
         "risk_tolerance" => 0.49,
-   )
+    )
     sector_knowledge = Dict("tech" => 0.55, "service" => 0.45, "manufacturing" => 0.35)
     action_history = ["invest", "explore", "maintain", "innovate", "invest"]
 
@@ -271,7 +271,7 @@ end
         action_history=action_history,
         agent_id=1,
         recent_outcomes=Dict{String,Any}[],
-   )
+    )
 
     basic = perceive_for("basic")
     premium = perceive_for("premium")
@@ -284,7 +284,7 @@ end
         basic.decision_confidence,
         basic.knowledge_signal.info_quality,
         basic.knowledge_signal.info_breadth,
-   )
+    )
     premium_levels = (
         premium.actor_ignorance.level,
         premium.practical_indeterminism.level,
@@ -293,7 +293,7 @@ end
         premium.decision_confidence,
         premium.knowledge_signal.info_quality,
         premium.knowledge_signal.info_breadth,
-   )
+    )
 
     for (basic_value, premium_value) in zip(basic_levels, premium_levels)
         @test isapprox(basic_value, premium_value; atol=1e-12)
@@ -310,7 +310,7 @@ end
         action_history=action_history,
         agent_id=1,
         recent_outcomes=Dict{String,Any}[],
-   )
+    )
     rich = GlimpseABM.perceive_uncertainty(
         KnightianUncertaintyEnvironment(cfg; rng=MersenneTwister(928)),
         traits,
@@ -322,7 +322,7 @@ end
         action_history=action_history,
         agent_id=1,
         recent_outcomes=Dict{String,Any}[],
-   )
+    )
 
     @test rich.knowledge_signal.info_breadth > sparse.knowledge_signal.info_breadth
     @test rich.actor_ignorance.level < sparse.actor_ignorance.level
@@ -336,7 +336,7 @@ end
     mc = GlimpseABM.get_market_conditions(
         sim.market;
         uncertainty_state=GlimpseABM.get_uncertainty_state(sim.uncertainty_env),
-   )
+    )
     opps = GlimpseABM.get_opportunities_for_agent(sim.market, agent)
     isempty(opps) && (opps = GlimpseABM.get_available_opportunities(sim.market))
 
@@ -351,7 +351,7 @@ end
         uncertainty_env=sim.uncertainty_env,
         info_system=sim.info_system,
         innovation_engine=sim.innovation_engine,
-   )
+    )
 
     @test haskey(sim.uncertainty_env._agent_short_term_buffers, agent.id)
     agent_buffers = sim.uncertainty_env._agent_short_term_buffers[agent.id]
@@ -368,7 +368,7 @@ end
     mc = GlimpseABM.get_market_conditions(
         market;
         uncertainty_state=GlimpseABM.get_uncertainty_state(env),
-   )
+    )
 
     neutral = EmergentAgent(1, cfg; primary_sector="tech", initial_capital=5_000_000.0,
                             fixed_ai_level="none", rng=MersenneTwister(922))
@@ -384,7 +384,7 @@ end
         "investment_amount" => 100_000.0,
         "capital_returned" => 20_000.0,
         "ai_used" => false,
-   ))
+    ))
 
     opps = GlimpseABM.get_available_opportunities(market)
     neutral_outcome = GlimpseABM.make_decision!(
@@ -395,7 +395,7 @@ end
         1;
         uncertainty_env=env,
         info_system=info_system,
-   )
+    )
     burned_outcome = GlimpseABM.make_decision!(
         burned,
         opps,
@@ -404,7 +404,7 @@ end
         1;
         uncertainty_env=env,
         info_system=info_system,
-   )
+    )
 
     @test burned_outcome["perception"].decision_confidence <
           neutral_outcome["perception"].decision_confidence
@@ -427,7 +427,7 @@ end
         capacity=1_000_000.0,
         config=cfg,
         rng=MersenneTwister(923),
-   )
+    )
 
     push!(agent.active_investments, Dict{String,Any}(
         "opportunity" => opp,
@@ -437,7 +437,7 @@ end
         "ai_label" => "none",
         "estimated_return" => 1.1,
         "decision_confidence" => 0.66,
-   ))
+    ))
 
     matured = GlimpseABM.process_matured_investments!(agent, market, 1; market_conditions=mc)
     @test length(matured) == 1
@@ -473,12 +473,12 @@ end
         action_history=agent.action_history,
         ai_learning_profile=agent.ai_learning,
         agent_id=agent.id,
-   )
+    )
 
     action = Dict{String,Any}(
         "perception" => perception,
         "ai_confidence" => 0.01,
-   )
+    )
 
     @test GlimpseABM._action_decision_confidence(action) == perception.decision_confidence
 end

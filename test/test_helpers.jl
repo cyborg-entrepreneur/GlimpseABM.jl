@@ -12,7 +12,7 @@ function test_market_conditions(; regime::String="normal",
                                   volatility::Float64=0.2,
                                   round::Int=0,
                                   uncertainty_state::Dict{String,Any}=Dict{String,Any}(),
-                                )
+                                 )
     return MarketConditions(
         regime,
         volatility,
@@ -27,5 +27,5 @@ function test_market_conditions(; regime::String="normal",
         0.0,                                    # avg_competition
         uncertainty_state,
         Dict{String,Any}(),                     # extras
-   )
+    )
 end

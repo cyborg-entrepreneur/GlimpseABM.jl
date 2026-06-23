@@ -11,13 +11,13 @@ include("test_helpers.jl")
 
 @testset "2026-06 review fixes" begin
 
- # ------------------------------------------------------------------
- # T1-1: ai_herding_intensity must measure concentration, not volume.
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # T1-1: ai_herding_intensity must measure concentration, not volume.
+    # ------------------------------------------------------------------
     @testset "Herding intensity: concentration not saturation" begin
         function run_herding_rounds(concentrated::Bool; n_rounds::Int=30)
- # N=1000 -> ~40 market opportunities, enough to distinguish
- # dispersed (20 distinct targets) from concentrated (one target).
+            # N=1000 -> ~40 market opportunities, enough to distinguish
+            # dispersed (20 distinct targets) from concentrated (one target).
             cfg = EmergentConfig(N_AGENTS=1000, N_ROUNDS=n_rounds, RANDOM_SEED=77)
             GlimpseABM.initialize!(cfg)
             market = MarketEnvironment(cfg; rng=MersenneTwister(77))
@@ -27,8 +27,8 @@ include("test_helpers.jl")
             intensity = 0.0
             for r in 1:n_rounds
                 actions = Dict{String,Any}[]
- # 20 AI invests: all on one opportunity (concentrated) or
- # spread across 20 distinct opportunities (dispersed).
+                # 20 AI invests: all on one opportunity (concentrated) or
+                # spread across 20 distinct opportunities (dispersed).
                 for k in 1:20
                     target = concentrated ? opp_ids[1] : opp_ids[k]
                     push!(actions, Dict{String,Any}(
@@ -38,16 +38,16 @@ include("test_helpers.jl")
                         "ai_behavior_level" => "premium",
                         "ai_used" => true,
                         "chosen_opportunity_details" => Dict{String,Any}("id" => target),
-                   ))
+                    ))
                 end
- # 20 non-AI maintains so AI participation is interior.
+                # 20 non-AI maintains so AI participation is interior.
                 for k in 21:40
                     push!(actions, Dict{String,Any}(
                         "action" => "maintain",
                         "agent_id" => k,
                         "ai_level_used" => "none",
                         "ai_used" => false,
-                   ))
+                    ))
                 end
                 GlimpseABM.record_ai_signals!(env, r, actions)
                 measure_uncertainty_state!(env, market, actions, Innovation[], r)
@@ -60,12 +60,12 @@ include("test_helpers.jl")
         dispersed = run_herding_rounds(false)
         concentrated = run_herding_rounds(true)
 
- # Dispersed AI investing is the null case: no herding signal even
- # after 30 sustained rounds (the old stock/flow metric pinned at 1.0
- # here within ~10 rounds).
+        # Dispersed AI investing is the null case: no herding signal even
+        # after 30 sustained rounds (the old stock/flow metric pinned at 1.0
+        # here within ~10 rounds).
         @test 0.0 <= dispersed < 0.10
- # All-on-one-opportunity is herding: clearly positive, clearly above
- # the dispersed null, and not saturated at the clamp.
+        # All-on-one-opportunity is herding: clearly positive, clearly above
+        # the dispersed null, and not saturated at the clamp.
         @test concentrated > 0.25
         @test concentrated > dispersed + 0.2
         @test concentrated < 1.0
@@ -84,7 +84,7 @@ include("test_helpers.jl")
                 "ai_used" => false,
                 "chosen_opportunity_details" =>
                     Dict{String,Any}("id" => market.opportunities[1].id),
-           ) for k in 1:10]
+            ) for k in 1:10]
             GlimpseABM.record_ai_signals!(env, r, actions)
             measure_uncertainty_state!(env, market, actions, Innovation[], r)
         end
@@ -92,9 +92,9 @@ include("test_helpers.jl")
                           "ai_herding_intensity", -1.0)) == 0.0
     end
 
- # ------------------------------------------------------------------
- # T2-5: volatility EWMA keeps state on the unscaled axis.
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # T2-5: volatility EWMA keeps state on the unscaled axis.
+    # ------------------------------------------------------------------
     @testset "Volatility EWMA steady state matches decay/scaling semantics" begin
         cfg = EmergentConfig(N_AGENTS=10, N_ROUNDS=10, RANDOM_SEED=81)
         GlimpseABM.initialize!(cfg)
@@ -107,17 +107,17 @@ include("test_helpers.jl")
             shares = isodd(i) ? shares_a : shares_b
             vol = GlimpseABM._update_volatility_state!(env, shares, ai_shares, nothing)
         end
- # Constant raw signal: action_delta = 0.5 each call, ai/market deltas 0.
+        # Constant raw signal: action_delta = 0.5 each call, ai/market deltas 0.
         raw = cfg.UNCERTAINTY_ACTION_VARIANCE_WEIGHT * 0.5
         expected = raw * cfg.UNCERTAINTY_VOLATILITY_SCALING
- # Pre-fix the feedback compounded the scaling: steady state was
- # ~(1-d)/(1-d*s) * s * raw ≈ 0.21*expected — far outside this band.
+        # Pre-fix the feedback compounded the scaling: steady state was
+        # ~(1-d)/(1-d*s) * s * raw ≈ 0.21*expected — far outside this band.
         @test isapprox(vol, expected; rtol=0.05)
     end
 
- # ------------------------------------------------------------------
- # T2-6: knowledge_gap driver of actor ignorance is alive.
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # T2-6: knowledge_gap driver of actor ignorance is alive.
+    # ------------------------------------------------------------------
     @testset "Actor-ignorance knowledge gap responds to coverage" begin
         cfg = EmergentConfig(N_AGENTS=10, N_ROUNDS=5, RANDOM_SEED=82)
         GlimpseABM.initialize!(cfg)
@@ -126,7 +126,7 @@ include("test_helpers.jl")
         GlimpseABM.initialize_base_knowledge!(kb)
         piece_ids = collect(keys(kb.knowledge_pieces))
         @test length(piece_ids) > 4
- # Sparse coverage: each agent holds 1 piece of a much larger base.
+        # Sparse coverage: each agent holds 1 piece of a much larger base.
         for agent_id in 1:10
             kb.agent_knowledge[agent_id] = Set([piece_ids[1]])
         end
@@ -138,10 +138,10 @@ include("test_helpers.jl")
         measure_uncertainty_state!(env, market, actions, Innovation[], 1)
         components = env.actor_ignorance_state["components"]
         sparse_gap = Float64(get(components, "knowledge_gap", -1.0))
- # The old opportunities-per-agent normalizer froze this at exactly 0.
+        # The old opportunities-per-agent normalizer froze this at exactly 0.
         @test sparse_gap > 0.05
 
- # Full coverage: every agent holds every piece -> gap collapses.
+        # Full coverage: every agent holds every piece -> gap collapses.
         for agent_id in 1:10
             kb.agent_knowledge[agent_id] = Set(piece_ids)
         end
@@ -154,9 +154,9 @@ include("test_helpers.jl")
         @test full_gap <= 0.01
     end
 
- # ------------------------------------------------------------------
- # T1-3: latent failure floor respects calibrated sector ranges.
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # T1-3: latent failure floor respects calibrated sector ranges.
+    # ------------------------------------------------------------------
     @testset "Service-sector failure heterogeneity survives the global clamp" begin
         cfg = EmergentConfig(N_AGENTS=100, N_ROUNDS=5, RANDOM_SEED=85)
         GlimpseABM.initialize!(cfg)
@@ -167,18 +167,18 @@ include("test_helpers.jl")
             push!(failures, opp.latent_failure_potential)
         end
         profile = cfg.SECTOR_PROFILES["service"]
- # Pre-fix every draw was pinned to exactly 0.1 (above the sector max
- # of ~0.093). Now the calibrated range must be populated with real
- # within-sector variation.
+        # Pre-fix every draw was pinned to exactly 0.1 (above the sector max
+        # of ~0.093). Now the calibrated range must be populated with real
+        # within-sector variation.
         @test minimum(failures) < 0.09
         @test std(failures) > 0.005
         @test maximum(failures) <= profile.failure_range[2] + 1e-9
         @test count(==(0.1), failures) < length(failures) ÷ 4
     end
 
- # ------------------------------------------------------------------
- # T2-3: dead agents release in-flight capital from opportunities.
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # T2-3: dead agents release in-flight capital from opportunities.
+    # ------------------------------------------------------------------
     @testset "Dead agent releases in-flight capital exactly once" begin
         cfg = EmergentConfig(N_AGENTS=2, N_ROUNDS=10, RANDOM_SEED=86,
                              SURVIVAL_COUNTS_INFLIGHT=false,
@@ -205,10 +205,10 @@ include("test_helpers.jl")
         alive = check_survival!(agent, 3)
         @test !alive
         @test !agent.alive
- # The dead agent's outstanding 100k stake is released...
+        # The dead agent's outstanding 100k stake is released...
         @test isapprox(opp.total_invested, 150_000.0; atol=1e-6)
- #...exactly once: neither a second death-release nor the (skipped)
- # maturity path may decrement again.
+        # ...exactly once: neither a second death-release nor the (skipped)
+        # maturity path may decrement again.
         GlimpseABM._release_inflight_capital_at_death!(agent)
         @test isapprox(opp.total_invested, 150_000.0; atol=1e-6)
         matured = GlimpseABM.process_matured_investments!(agent, market, 9)
@@ -216,9 +216,9 @@ include("test_helpers.jl")
         @test isapprox(opp.total_invested, 150_000.0; atol=1e-6)
     end
 
- # ------------------------------------------------------------------
- # T2-1: innovation returns are recorded -> ROIC is a real signal.
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # T2-1: innovation returns are recorded -> ROIC is a real signal.
+    # ------------------------------------------------------------------
     @testset "Innovate ROIC reflects realized cash, not -1.0 forever" begin
         cfg = EmergentConfig(N_AGENTS=2, N_ROUNDS=5, RANDOM_SEED=89)
         GlimpseABM.initialize!(cfg)
@@ -226,9 +226,9 @@ include("test_helpers.jl")
         agent = EmergentAgent(1, cfg; primary_sector="tech",
                               initial_capital=2_000_000.0,
                               fixed_ai_level="none", rng=MersenneTwister(90))
- # Legacy fallback path (no engine) is deterministic enough here: both
- # success (return = spend * multiplier) and failure (12% recovery)
- # must move ROIC off the -1.0 floor.
+        # Legacy fallback path (no engine) is deterministic enough here: both
+        # success (return = spend * multiplier) and failure (12% recovery)
+        # must move ROIC off the -1.0 floor.
         outcome = GlimpseABM._execute_innovate!(agent, market, 1, Dict{String,Any}())
         roic = GlimpseABM.compute_roic(agent.resources.performance, "innovate")
         @test roic > -0.95
@@ -238,16 +238,16 @@ include("test_helpers.jl")
         @test returned > 0.0
     end
 
- # ------------------------------------------------------------------
- # T2-4: regime chain steps at most once per round (legacy path removed).
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # T2-4: regime chain steps at most once per round (legacy path removed).
+    # ------------------------------------------------------------------
     @testset "No second regime-transition path exists" begin
         @test !isdefined(GlimpseABM, :_transition_regime!)
     end
 
- # ------------------------------------------------------------------
- # Test-suite gap (a)(i): default config primitives are tier-neutral.
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Test-suite gap (a)(i): default config primitives are tier-neutral.
+    # ------------------------------------------------------------------
     @testset "Default config tier primitives are neutral" begin
         cfg = EmergentConfig()
         for (tier, v) in cfg.AI_EXECUTION_SUCCESS_MULTIPLIERS
@@ -264,9 +264,9 @@ include("test_helpers.jl")
         @test cfg.STRATEGIC_ANTICIPATION_STRENGTH == 0.0
     end
 
- # ------------------------------------------------------------------
- # Test-suite gap (e): v3.5 power-law right tail.
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Test-suite gap (e): v3.5 power-law right tail.
+    # ------------------------------------------------------------------
     @testset "Power-law tail: alpha governs tail mass; ceiling holds" begin
         function sample_returns(alpha::Float64; n::Int=20_000)
             cfg = EmergentConfig(N_AGENTS=10, N_ROUNDS=5, RANDOM_SEED=91)
@@ -283,24 +283,24 @@ include("test_helpers.jl")
 
         heavy = sample_returns(2.2)
         light = sample_returns(3.5)
- # Heavier tail (lower alpha) must put strictly more mass above 5x.
+        # Heavier tail (lower alpha) must put strictly more mass above 5x.
         @test count(>(5.0), heavy) > count(>(5.0), light)
         @test count(>(3.0), heavy) > 0          # the tail exists at all
         @test maximum(heavy) <= 200.0 + 1e-9    # scarcity-gated hard ceiling
- # Typical outcomes stay in a sane venture band.
+        # Typical outcomes stay in a sane venture band.
         @test 0.3 < median(heavy) < 2.5
     end
 
- # ------------------------------------------------------------------
- # Test-suite gap (c): the crowding penalty is actually convex.
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Test-suite gap (c): the crowding penalty is actually convex.
+    # ------------------------------------------------------------------
     @testset "Crowding penalty convexity (second difference)" begin
         cfg = EmergentConfig(N_AGENTS=10, N_ROUNDS=5, RANDOM_SEED=94)
         GlimpseABM.initialize!(cfg)
         mc = test_market_conditions()
         capacity = 1_000_000.0
- # Saturation levels in the over-capacity (penalty-active) region,
- # equally spaced so second differences are meaningful.
+        # Saturation levels in the over-capacity (penalty-active) region,
+        # equally spaced so second differences are meaningful.
         sat_levels = [2.0, 2.5, 3.0, 3.5, 4.0]
         log_means = Float64[]
         for s in sat_levels
@@ -314,19 +314,19 @@ include("test_helpers.jl")
             vals = [GlimpseABM.realized_return(opp, mc, "none"; rng=rng) for _ in 1:6_000]
             push!(log_means, log(mean(vals)))
         end
- # Monotone decreasing in saturation...
+        # Monotone decreasing in saturation...
         @test issorted(log_means; rev=true)
- #...and convex penalty: log-mean decline accelerates (second
- # differences negative). A linear-in-saturation penalty would have
- # ~zero second differences and fail this.
+        # ...and convex penalty: log-mean decline accelerates (second
+        # differences negative). A linear-in-saturation penalty would have
+        # ~zero second differences and fail this.
         d2 = diff(diff(log_means))
         @test all(d2 .< 0.0)
     end
 
- # ------------------------------------------------------------------
- # Phantom invests: with no visible opportunities, "invest" cannot be
- # sampled or recorded.
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Phantom invests: with no visible opportunities, "invest" cannot be
+    # sampled or recorded.
+    # ------------------------------------------------------------------
     @testset "No phantom invest actions when no opportunities visible" begin
         cfg = EmergentConfig(N_AGENTS=2, N_ROUNDS=5, RANDOM_SEED=97)
         GlimpseABM.initialize!(cfg)

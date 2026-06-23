@@ -173,7 +173,7 @@ function EmergentSimulation(;
                                                       rng=rng)
 
     # Create information system for AI-assisted analysis. common_error_seed
-    # seeds the DEDICATED common-error RNG stream (emergence audit P9,
+    # seeds the DEDICATED common-error RNG stream (emergence audit,
     # AI_ERROR_CORRELATION): derived from the run's actual_seed so rho > 0
     # cells are reproducible per (seed, run), and consumed ONLY when rho > 0
     # — the rho = 0 default never touches it (bit-identity pin,
@@ -349,7 +349,7 @@ function _apply_matured_ai_learning!(
         "capital_returned",
         inv_amount * Float64(get(matured_outcome, "return_multiple", 1.0)),
     ))
-    # invariant (raw/decision split, design note 2026-06-09): the
+    # F1 invariant (raw/decision split, engine invariants 2026-06-09): the
     # decision-time PREDICTION scored here is the RAW instrument estimate —
     # what the InformationSystem actually said ("instrument_estimated_return")
     # — never the decision-basis "estimated_return", which S1 strategy
@@ -468,7 +468,7 @@ function step!(sim::EmergentSimulation, round::Int)
     # (competition, total_invested, market_impact) evolves across rounds,
     # so stale estimates from round N-1 leak into round N decisions. Clearing
     # here forces a fresh Information draw per round per agent. clear_cache!
-    # also clears the common-error cache (emergence audit P9), making the
+    # also clears the common-error cache (emergence audit), making the
     # shared draw per-(opportunity, ROUND, tier) — the round key is this clear.
     clear_cache!(sim.info_system)
 
@@ -1018,7 +1018,7 @@ function compile_round_stats(
     utility_floor_hits = 0
     utility_ceiling_hits = 0
     utility_value_count = 0
-    # A1 open-action pivot telemetry (the design notes
+    # A1 open-action pivot telemetry (the strategy-ladder design notes
     # §Open-action extension): per-decision counts attached by make_decision!
     # only when ENABLE_PIVOT is on (defaults below keep disabled runs at 0).
     pivot_count_total = 0
@@ -1200,7 +1200,7 @@ function compile_round_stats(
         capital_returned["invest"] += ret
     end
 
-    # ledger (design note): pivot recoveries are realized
+    # F2a LEDGER (engine invariants 2026-06-09): pivot recoveries are realized
     # invest-channel returns (a pivot resolves an investment at the haircut
     # value), so they enter capital_returned["invest"] alongside maturity
     # payouts — otherwise mean_roic_invest / net_capital_flow_invest leak the

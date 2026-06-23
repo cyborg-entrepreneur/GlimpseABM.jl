@@ -15,7 +15,7 @@ function equalize_ai_primitives_to_none!(config::EmergentConfig)
             none_cfg.info_quality,
             none_cfg.info_breadth,
             old.per_use_cost,
-       )
+        )
         config.AI_DOMAIN_CAPABILITIES[tier] = deepcopy(config.AI_DOMAIN_CAPABILITIES["none"])
         config.AI_QUALITY_BOOST[tier] = config.AI_QUALITY_BOOST["none"]
         config.AI_INFORMATION_QUALITY_BOOSTS[tier] = config.AI_INFORMATION_QUALITY_BOOSTS["none"]
@@ -37,7 +37,7 @@ function accessible_knowledge_ids_for(tier::String; seed::Int=1)
         tier;
         agent_traits=traits,
         rng=MersenneTwister(seed),
-   )
+    )
     return sort([k.id for k in accessible])
 end
 
@@ -57,7 +57,7 @@ function innovation_attempt_fixture(tier::String)
         primary_sector="tech",
         fixed_ai_level=tier,
         rng=MersenneTwister(99),
-   )
+    )
     for key in keys(agent.traits)
         agent.traits[key] = 0.0
     end
@@ -89,7 +89,7 @@ end
         1;
         ai_level="none",
         rng=MersenneTwister(1),
-   )
+    )
     premium_innovation = attempt_innovation!(
         premium_engine,
         premium_agent,
@@ -97,7 +97,7 @@ end
         1;
         ai_level="premium",
         rng=MersenneTwister(1),
-   )
+    )
 
     @test isnothing(premium_innovation) == isnothing(none_innovation)
 end

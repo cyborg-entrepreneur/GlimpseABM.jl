@@ -19,9 +19,9 @@ include(joinpath(@__DIR__, "test_helpers.jl"))
     GlimpseABM.initialize!(cfg)
     market_conditions = test_market_conditions()
 
- # Build three opportunities with identical latent fundamentals but
- # varying saturation. Disable discovery-gating by marking discovered=true
- # — we're probing realized_return directly, not the discovery path.
+    # Build three opportunities with identical latent fundamentals but
+    # varying saturation. Disable discovery-gating by marking discovered=true
+    # — we're probing realized_return directly, not the discovery path.
     function build_opp(sat_ratio::Float64; competition::Float64=1.0)
         cap = 1.0e7
         opp = Opportunity(
@@ -34,14 +34,14 @@ include(joinpath(@__DIR__, "test_helpers.jl"))
             sector="tech",
             capacity=cap,
             total_invested=sat_ratio * cap,
-       )
+        )
         opp.competition = competition
         return opp
     end
 
- # ───────────────────────────────────────────────────────────────
- # Property 1: Below K_sat, penalty is ~zero. Above K_sat, returns fall.
- # ───────────────────────────────────────────────────────────────
+    # ───────────────────────────────────────────────────────────────
+    # Property 1: Below K_sat, penalty is ~zero. Above K_sat, returns fall.
+    # ───────────────────────────────────────────────────────────────
     rng = MersenneTwister(42)
     N = 400
     low_sat  = build_opp(0.3)    # well below K_sat=1.2
@@ -52,15 +52,15 @@ include(joinpath(@__DIR__, "test_helpers.jl"))
     high_returns = [GlimpseABM.realized_return(high_sat, market_conditions; rng=rng) for _ in 1:N]
 
     @test mean(low_returns) > mean(high_returns)
- # Magnitude check: high_sat should lose a meaningful chunk
+    # Magnitude check: high_sat should lose a meaningful chunk
     @test mean(high_returns) / mean(low_returns) < 0.85
 
- # ───────────────────────────────────────────────────────────────
- # Property 2: Count-invariance. Two opps with identical capital
- # saturation but wildly different competition counts produce
- # statistically indistinguishable returns. This is THE point of
- # the v3.1 refactor.
- # ───────────────────────────────────────────────────────────────
+    # ───────────────────────────────────────────────────────────────
+    # Property 2: Count-invariance. Two opps with identical capital
+    # saturation but wildly different competition counts produce
+    # statistically indistinguishable returns. This is THE point of
+    # the v3.1 refactor.
+    # ───────────────────────────────────────────────────────────────
     few_competitors  = build_opp(1.0, competition=1.0)
     many_competitors = build_opp(1.0, competition=50.0)
 
@@ -69,13 +69,13 @@ include(joinpath(@__DIR__, "test_helpers.jl"))
     rng = MersenneTwister(42)
     many_returns = [GlimpseABM.realized_return(many_competitors, market_conditions; rng=rng) for _ in 1:N]
 
- # Means should be within 5% of each other — count doesn't feed the penalty
+    # Means should be within 5% of each other — count doesn't feed the penalty
     ratio = mean(many_returns) / mean(few_returns)
     @test 0.95 < ratio < 1.05
 
- # ───────────────────────────────────────────────────────────────
- # Property 3: Penalty is monotone in saturation.
- # ───────────────────────────────────────────────────────────────
+    # ───────────────────────────────────────────────────────────────
+    # Property 3: Penalty is monotone in saturation.
+    # ───────────────────────────────────────────────────────────────
     sat_levels = [0.5, 1.0, 1.5, 2.0, 3.0]
     means = Float64[]
     for s in sat_levels
@@ -83,7 +83,7 @@ include(joinpath(@__DIR__, "test_helpers.jl"))
         rng = MersenneTwister(42)
         push!(means, mean(GlimpseABM.realized_return(opp, market_conditions; rng=rng) for _ in 1:N))
     end
- # Allow 1-2 inversions due to stochastic noise, but the overall trend must be down
+    # Allow 1-2 inversions due to stochastic noise, but the overall trend must be down
     @test means[1] > means[end]
     @test means[1] > means[3]  # 0.5 vs 1.5
 end

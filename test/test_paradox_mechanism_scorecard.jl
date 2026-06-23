@@ -21,7 +21,7 @@ include(joinpath(@__DIR__, "..", "scripts", "run_mixed_tier_analysis_full.jl"))
         perceived_practical=0.50,
         perceived_novelty=0.40,
         perceived_recursion=0.30,
-   )
+    )
         survivor_actor_level = isnothing(survivor_actor) ? actor : survivor_actor
         return Dict{String,Any}(
             "mean_survival_rate" => survival,
@@ -52,7 +52,7 @@ include(joinpath(@__DIR__, "..", "scripts", "run_mixed_tier_analysis_full.jl"))
             "confidence_outcome_realized_multiple_std" => roi_std,
             "mean_niches_per_agent" => niches,
             "mean_combinations_per_agent" => combos,
-       )
+        )
     end
 
     summary = Dict{String,Any}(
@@ -78,8 +78,8 @@ include(joinpath(@__DIR__, "..", "scripts", "run_mixed_tier_analysis_full.jl"))
                 perceived_practical=0.66,
                 perceived_novelty=0.58,
                 perceived_recursion=0.46,
-           ),
-       ),
+            ),
+        ),
         "decision_diagnostics_summary" => Dict{String,Float64}(
             "mean_market_crowding_pressure" => 0.21,
             "mean_market_opportunity_overlap" => 0.34,
@@ -88,8 +88,8 @@ include(joinpath(@__DIR__, "..", "scripts", "run_mixed_tier_analysis_full.jl"))
             "mean_market_ai_herding_intensity" => 0.27,
             "mean_market_ai_action_correlation" => 0.46,
             "mean_market_combo_reuse_pressure" => 0.31,
-       ),
-   )
+        ),
+    )
 
     scorecard = build_paradox_mechanism_scorecard(summary)
     premium = scorecard["premium"]

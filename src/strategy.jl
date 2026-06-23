@@ -2,7 +2,7 @@
 AGI strategy ladder — S1/S2/S3 decision strategies.
 
 Implements the strategy rungs specified in
-the design notes:
+the strategy-ladder design notes:
 
   S1 `consensus_discounting`  anticipatory congestion shade on the expected
                               return of consensus-legible opportunities
@@ -236,24 +236,24 @@ end
 # ontology with the agent knowledge keys.
 function _component_overlap(
     opp,
-    sector_knowledge,
+    agent_components::Set{String},
     fallback::Float64,
 )::Float64
+    # S2 per-opportunity edge: overlap between the agent's COMPONENT knowledge
+    # (the kb.agent_knowledge mirror synced in make_decision!) and the
+    # opportunity's knowledge_components. Empty agent_components (flag off, or an
+    # agent with no component knowledge) → sector-familiarity fallback, the
+    # pre-edge behavior, so the model is byte-identical when
+    # ENABLE_OPPORTUNITY_COMPONENTS is off.
+    isempty(agent_components) && return fallback
     if hasfield(typeof(opp), :knowledge_components)
         comps = getfield(opp, :knowledge_components)
-        if !isnothing(comps)
+        if !isnothing(comps) && !isempty(comps)
             component_ids = Set(String.(comps))
-            if !isempty(component_ids) && !isnothing(sector_knowledge)
-                agent_components = Set{String}(String(k) for k in keys(sector_knowledge))
-                if !isempty(agent_components)
-                    return length(intersect(agent_components, component_ids)) /
-                           length(component_ids)
-                end
-            end
+            return length(intersect(agent_components, component_ids)) /
+                   length(component_ids)
         end
     end
-    # Base Opportunity (no knowledge_components): per-opportunity edge is
-    # sector familiarity.
     return fallback
 end
 
@@ -267,15 +267,20 @@ carries the field, else sector familiarity (the base Opportunity path).
 Agent-constant traits are deliberately EXCLUDED (G1 fix, 2026-06-09): they
 cannot re-rank a within-agent choice set and only added level noise plus a
 partial double-count of the channels the traits already act through (base
-score, confidence). Documented in the design notes.
+score, confidence). Documented in the strategy-ladder design notes.
 """
 function private_edge(
     opp,
     sector_knowledge,
     sector_familiarity_value::Float64,
+    agent_components::Set{String}=Set{String}(),
 )::Float64
+    # agent_components empty (default / flag off) → _component_overlap returns the
+    # sector-familiarity fallback, preserving the pre-edge behavior. sector_knowledge
+    # is retained for signature compatibility with existing direct callers but no
+    # longer drives the overlap (the agent's COMPONENT set does).
     return clamp(
-        _component_overlap(opp, sector_knowledge,
+        _component_overlap(opp, agent_components,
                            clamp(sector_familiarity_value, 0.0, 1.0)),
         0.0, 1.0,
     )
@@ -314,12 +319,13 @@ NOTE (documented double-dip resolution): `evaluate_opportunity_basic` already
 applies ×(1 + 0.5·fam) to the same score. With within-set centering the S2
 term adds a GRADIENT on top of that base gradient — an intentional, dialable
 steepening of the founder-market-fit slope (dial: STRATEGY_EDGE_WEIGHT), not
-a hidden level artifact. See the design notes.
+a hidden level artifact. See the strategy-ladder design notes.
 """
 function strategy_edge_context(
     config::EmergentConfig,
     sector_knowledge,
     opportunities::AbstractVector,
+    agent_components::Set{String}=Set{String}(),
 )::Union{StrategyEdgeContext,Nothing}
     strategy_uses_s2(config.STRATEGY_MODE) || return nothing
     isempty(opportunities) && return nothing
@@ -337,7 +343,9 @@ function strategy_edge_context(
             config=config,
             default=0.1,
         )
-        e = private_edge(opp, sector_knowledge, fam)
+        # agent_components empty (default / flag off) → private_edge returns the
+        # sector-familiarity fallback (fam), so this is byte-identical when off.
+        e = private_edge(opp, sector_knowledge, fam, agent_components)
         edges[String(opp.id)] = e
         total += e
     end

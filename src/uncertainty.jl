@@ -461,13 +461,14 @@ function _rolling_ai_signal_stats(env::KnightianUncertaintyEnvironment)
         clamp(baseline_disconfirmation_count / baseline_exposure_count, 0.0, 1.0) : 0.0
     # Uncertainty attributable to AI is its EXCESS forecast error over the
     # human baseline. When AI forecasts are no worse than human ones this is
-    # ~0 instead of a hard-wired AI-presence offset (a known asymmetry: uncertainty re-entering only for AI users through a
+    # ~0 instead of a hard-wired AI-presence offset (avoiding the asymmetry of
+    # uncertainty re-entering only for AI users through a
     # channel with no human analogue).
     excess_ai_rate = max(0.0, ai_rate - baseline_rate)
 
     severity_values = Float64[]
     miscalibration_values = Float64[]
-    # (design note): miscalibration is split by population the
+    # F4 (engine invariants 2026-06-09): miscalibration is split by population the
     # same way the disconfirmation rate is. Confident-but-wrong forecasts are
     # a property of Pareto-tailed venture returns for everyone; only the
     # EXCESS of the AI population's miscalibration over the human baseline is
@@ -542,7 +543,7 @@ function _rolling_ai_signal_stats(env::KnightianUncertaintyEnvironment)
 end
 
 """
-(design note): once-per-round cache for
+F5 (engine invariants 2026-06-09): once-per-round cache for
 `_rolling_ai_signal_stats`. The rolling stats are a pure function of the
 recorded exposure window, but the uncached function was called once per agent
 from perceive_uncertainty (plus once from measure_uncertainty_state!), an
@@ -555,7 +556,7 @@ the first agent's view for the rest of the round.
 Thread-safety: a simulation is single-threaded internally (no @threads/@spawn
 anywhere in src/); the only threaded harness is the robustness suite script,
 which threads across RUNS (Threads.@threads over run_idx,
-run_reviewer_robustness_suite.jl) with each run owning its own
+run_robustness_suite.jl) with each run owning its own
 KnightianUncertaintyEnvironment — so this per-env cache is never shared
 across threads (same isolation argument as the strategic-opacity
 once-per-round guard).
@@ -1816,7 +1817,7 @@ function _recent_outcome_experience_stats(
         observable_outcomes = filter(o -> get(o, "action", "") in ("invest", "innovate", "explore", "pivot"), recent_outcomes)
         n_outcomes = length(observable_outcomes)
         if !isempty(observable_outcomes)
-            # (design note): pivots are EXCLUDED from the
+            # F2e (engine invariants 2026-06-09): pivots are EXCLUDED from the
             # Boolean success channels — a censored salvage at a
             # policy-determined haircut is neither a success nor a
             # maturity-grade failure, and counting every pivot as a failure
@@ -2706,7 +2707,8 @@ function perceive_uncertainty(
     # population's forecast-disconfirmation rate over the human baseline, not
     # the overall rate. Pareto-tailed venture returns make large forecast
     # errors ubiquitous for everyone; charging the full rate to AI presence
-    # would hard-wire an AI offset with no human analogue (a modeling concern). When AI forecasts are no worse than human ones this pressure is ~0.
+    # would hard-wire an AI offset with no human analogue. When AI forecasts
+    # are no worse than human ones this pressure is ~0.
     # F5: cached per (round, record count) — perceive_uncertainty runs once
     # per agent, and the rolling stats are a pure function of the recorded
     # exposure window, so per-agent recomputation was pure waste.
@@ -2869,7 +2871,7 @@ function perceive_uncertainty(
     # Overall uncertainty from all dimensions.
     #
     # DESIGN STATEMENT — agentic-novelty sign (decision resolved 2026-06-09,
-    # the design notes): novelty enters DECISION
+    # review item 1 in the design notes): novelty enters DECISION
     # CONFIDENCE inverted, via (1 − novelty) under the *_novelty_resolved_
     # weight. The theory: agentic novelty the agent itself perceives represents
     # opportunity space the agent has actively opened — self-authored novelty
@@ -2878,8 +2880,8 @@ function perceive_uncertainty(
     # MEASUREMENT layer correctly reports novelty as an uncertainty dimension
     # (the agent's confidence and the analyst's uncertainty accounting are
     # different constructs and may legitimately diverge). This must be stated
-    # explicitly in the model description, where a reader seeing this
-    # composition without the design statement will call it a sign error.
+    # explicitly in the manuscript's model section — reading this
+    # composition without the design statement could look like a sign error.
     # The field name (novelty_resolved_weight) encodes the intent.
     total_uncertainty = (
         ignorance_level * pw.total_uncertainty_actor_weight +

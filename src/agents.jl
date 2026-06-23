@@ -37,6 +37,7 @@ mutable struct AgentResources
     performance::PerformanceTracker
     knowledge_last_used::Dict{String,Int}
     private_opportunity_ids::Set{String}
+    component_knowledge::Set{String}  # S2 mirror of kb.agent_knowledge[id] (gated; synced in make_decision!)
 end
 
 function AgentResources(capital::Float64)
@@ -52,7 +53,8 @@ function AgentResources(capital::Float64)
         0,
         PerformanceTracker(capital),
         Dict{String,Int}(),
-        Set{String}()
+        Set{String}(),
+        Set{String}()  # component_knowledge mirror (gated; empty until synced)
     )
 end
 
@@ -467,6 +469,15 @@ mutable struct EmergentAgent
     # Used downstream to compute per-tier sector-concentration HHI (the direct
     # correlated-commitment / sector-convergence diagnostic).
     sector_investment_counts::Dict{String,Int}
+
+    # Venture-panel telemetry for the supplementary analysis: one tuple per matured
+    # investment — (realized_multiple, crowding_exposure, ai_estimate, opp_latent_return,
+    # amount, maturity_round, is_created, opp_capacity). is_created = 1.0 if the
+    # opportunity was a founder-CREATED niche (innovation-spawned or explored niche) vs
+    # 0.0 endowed — used to test whether veridical convergence re-crowds founders' own
+    # created niches. opp_capacity is the canonical niche/market-size tail variable.
+    # Append-only and never read by the engine, so it is inert (canonical results identical).
+    venture_ledger::Vector{NTuple{8,Float64}}
 end
 
 function EmergentAgent(
@@ -580,6 +591,7 @@ function EmergentAgent(
         AgentUncertaintyMetrics(),  # uncertainty_metrics (emergent, agent-level)
         rng,
         Dict{String,Int}(),  # sector_investment_counts
+        NTuple{8,Float64}[],  # venture_ledger
     )
 end
 
@@ -973,7 +985,7 @@ function execute_action!(
     round::Int;
     opportunity::Union{Opportunity,Nothing} = nothing,
     estimated_return::Union{Float64,Nothing} = nothing,
-    # (design note): the RAW instrument estimate
+    # F1 (engine invariants 2026-06-09): the RAW instrument estimate
     # (Information.estimated_return) alongside the decision-basis
     # estimated_return, which may be strategy-shaded under S1. Accuracy and
     # learning consumers judge the instrument against THIS value; sizing and
@@ -1845,7 +1857,7 @@ function process_matured_investments!(
             record_return!(agent.resources.performance, "invest", capital_returned;
                           ai_level=tier_used, round_num=round)
 
-            # Track emergent uncertainty metrics. F1 (design note
+            # Track emergent uncertainty metrics. F1 (engine invariants
             # 2026-06-09): estimation accuracy is judged against the RAW
             # instrument estimate (instrument_estimated_return; legacy
             # fallback to the decision-basis estimated_return). When NO
@@ -1866,6 +1878,22 @@ function process_matured_investments!(
             # matured record's "estimated_return" key (sizing semantics).
             estimated_return = Float64(get(investment, "estimated_return",
                 isnothing(instrument_estimate) ? ret_multiple : instrument_estimate))
+
+            # Venture-panel telemetry: realized multiple, crowding faced, the AI's
+            # ex-ante estimate, latent return, amount, maturity round, created flag,
+            # and opportunity capacity. Capacity is the canonical market-size tail;
+            # append-only and inert to dynamics.
+            opp_latent = hasfield(typeof(opp), :latent_return_potential) ?
+                Float64(opp.latent_return_potential) : NaN
+            opp_capacity = (hasfield(typeof(opp), :capacity) && opp.capacity > 0.0) ?
+                Float64(opp.capacity) : NaN
+            # Created (founder-spawned/niche) vs endowed opportunity: niche_/spawn_ id
+            # prefixes or a non-null origin_innovation_id mark a created niche.
+            is_created = (startswith(opp.id, "niche_") || startswith(opp.id, "spawn_") ||
+                (hasfield(typeof(opp), :origin_innovation_id) && opp.origin_innovation_id !== nothing)) ? 1.0 : 0.0
+            push!(agent.venture_ledger,
+                  (ret_multiple, crowding_exposure, estimated_return, opp_latent,
+                   invested_amount, Float64(round), is_created, opp_capacity))
 
             invested_tier = tier_used
             matured_outcome = Dict{String,Any}(
@@ -1928,7 +1956,7 @@ function process_matured_investments!(
 end
 
 """
-Shared observable forecast-disconfirmation scorer + recorder ( (design note)
+Shared observable forecast-disconfirmation scorer + recorder (engine invariants F2b,
 2026-06-09). Used by BOTH resolution paths of an investment — maturity
 (`_apply_matured_ai_learning!`, simulation.jl) and pivot
 (`review_and_pivot_investments!`) — so a prediction is scored by exactly one
@@ -2010,7 +2038,7 @@ function _stored_instrument_estimate(record::Dict{String,Any})::Union{Float64,No
 end
 
 """
-A1 open-action pivot review (the design notes
+A1 open-action pivot review (the strategy-ladder design notes
 §Open-action extension). Once per round, an ENABLE_PIVOT agent reviews its
 in-flight investments and liquidates any whose decision-relevant expected
 residual value has fallen below today's recoverable value plus a small
@@ -2018,7 +2046,7 @@ redeployment margin (exact rule: `pivot_trigger`, open_action.jl). Returns
 `(n_pivots, recovered_total, committed_total, pivoted_opportunity_ids)`.
 
 Call site: make_decision!, FIRST among the decision-economics steps — before
-estimate_operational_costs and ALL action-utility calculations (design note
+estimate_operational_costs and ALL action-utility calculations (engine invariants
 F3c, 2026-06-09) — so every utility sees post-pivot capital/portfolio state
 consistently and recovered capital is genuinely redeployable this round.
 The trigger's instrument input is the decision-time-STORED commitment
@@ -2031,7 +2059,7 @@ at maturity OR recovered at pivot, never both (investments with
 maturity_round ≤ round are skipped defensively for direct-call/test paths).
 The review consumes no RNG.
 
-A pivot mirrors maturity (design note):
+A pivot mirrors maturity (engine invariants F2, approved design):
 
   LEDGER          recovered = committed × haircut(progress) credited to
                   capital and total_returned; record_return! books it into
@@ -2068,7 +2096,7 @@ When ENABLE_PIVOT=false this returns before ANY computation (bit-identical
 default, pinned by test_open_action_space.jl and the open-action debug
 counter). Config validation happens at initialize!
 (validate_open_action_config); the previous per-agent-per-round re-validation
-was removed as hot-path hygiene (design note).
+was removed as hot-path hygiene (engine invariants F6).
 """
 function review_and_pivot_investments!(
     agent::EmergentAgent,
@@ -2088,7 +2116,7 @@ function review_and_pivot_investments!(
     recovered_total = 0.0
     committed_total = 0.0
     pivoted_ids = Set{String}()
-    # Deferred survivor vector (design note): allocated only when the
+    # Deferred survivor vector (engine invariants F6): allocated only when the
     # first pivot actually fires; the overwhelmingly common no-pivot round
     # allocates nothing.
     investments = agent.active_investments
@@ -2978,10 +3006,10 @@ function choose_ai_level(
     # task charges on innovate ("innovation_potential") and explore
     # ("exploration"). Posted prices are not Knightian uncertainty: an agent
     # may misjudge returns, but a planner that misreads the published price
-    # sheet is mispricing, not bounded rationality. A misconfigured planner that priced ≤4
+    # sheet is a bug, not bounded rationality. The pre-fix planner priced ≤4
     # cheap "tier_review" calls and underestimated frontier usage cost by an
     # order of magnitude, systematically biasing emergent tier adoption
-    # toward expensive tiers.
+    # toward expensive tiers (plan-vs-bill audit, 2026-06-09).
     #
     # Visibility is tier-dependent (info_breadth), so each candidate tier's
     # expected analysis volume is the agent's observed visible count scaled by
@@ -3227,7 +3255,7 @@ function calculate_investment_utility(
     # active cost backend, so this loop deducts AI analysis cost the same way
     # evaluate_portfolio_opportunities does — otherwise utility evaluation would
     # give some tiers free AI while ranking charged for it.
-    # AGI strategy ladder gate (the design notes).
+    # AGI strategy ladder gate (the strategy-ladder design notes).
     # Computed ONCE per call; when inactive (reactive default, or this tier
     # outside STRATEGY_TIERS) every hook below short-circuits before any
     # strategy computation, leaving the reactive path bit-identical.
@@ -3239,7 +3267,8 @@ function calculate_investment_utility(
     # choice set — re-ranking signal only, no level confound).
     ladder_edges = ladder_active ?
         strategy_edge_context(agent.config, agent.resources.knowledge,
-                              opportunities) : nothing
+                              opportunities,
+                              agent.resources.component_knowledge) : nothing
 
     max_score = 0.0
     for opp in opportunities
@@ -3395,7 +3424,7 @@ function calculate_innovation_utility(
     market_conditions::MarketConditions,
     perception::Perception;
     ai_level::String = "none",
-    # AGI strategy ladder S3a shift (the design notes),
+    # AGI strategy ladder S3a shift (the strategy-ladder design notes),
     # computed by the caller (make_decision!) from the agent's own information
     # cache. Default 0.0 = reactive; applied behind a != 0.0 gate below so the
     # reactive path performs the identical FP operations.
@@ -3819,7 +3848,7 @@ function evaluate_portfolio_opportunities(
     info_quality_boosts = getfield_default(agent.config, :AI_INFORMATION_QUALITY_BOOSTS, Dict{String,Float64}())
     info_quality_eval = clamp(info_quality_eval + Float64(get(info_quality_boosts, effective_ai_level, 0.0)), 0.0, 0.99)
 
-    # AGI strategy ladder gate (the design notes): when
+    # AGI strategy ladder gate (the strategy-ladder design notes): when
     # inactive the hooks below short-circuit before any strategy computation
     # (bit-identical reactive requirement). Hooked HERE (the ranking loop) so
     # the CHOSEN opportunity changes under S1/S2/S3, not just the
@@ -3830,7 +3859,8 @@ function evaluate_portfolio_opportunities(
     # below centers each candidate on that mean (mean multiplier ≡ 1).
     ladder_edges = ladder_active ?
         strategy_edge_context(agent.config, agent.resources.knowledge,
-                              opp_pool) : nothing
+                              opp_pool,
+                              agent.resources.component_knowledge) : nothing
 
     for opp in opp_pool
         # estimated_returns is populated for every opp earlier in this function;
@@ -3881,6 +3911,27 @@ function evaluate_portfolio_opportunities(
         if ladder_active
             final_score *= strategy_score_multiplier(
                 agent.config, ladder_edges, opp, strategy_info, perception)
+        end
+
+        # Per-niche crowding aversion (canonical, 2026-06-22): the agent
+        # anticipates the realized convex capacity penalty it would suffer in an
+        # oversubscribed niche, using only the decision-time observable
+        # saturation (total_invested / capacity). Same λ/γ/K as the realized
+        # penalty (models.jl); scaled by DECISION_CROWDING_AVERSION_WEIGHT
+        # (0.0 = off / bit-identical). Steers the ranking toward emptier niches.
+        decision_crowd_w = agent.config.DECISION_CROWDING_AVERSION_WEIGHT
+        if decision_crowd_w > 0.0 &&
+           hasfield(typeof(opp), :capacity) &&
+           hasfield(typeof(opp), :total_invested) &&
+           opp.capacity > 0.0
+            decision_sat = opp.total_invested / opp.capacity
+            decision_excess = max(0.0,
+                decision_sat / agent.config.CROWDING_CAPACITY_RATIO_K - 1.0)
+            if decision_excess > 0.0
+                final_score *= exp(-decision_crowd_w *
+                    agent.config.CROWDING_STRENGTH_LAMBDA *
+                    decision_excess ^ agent.config.CROWDING_CONVEXITY_GAMMA)
+            end
         end
 
         inf = get(info_cache_local, opp.id, nothing)
@@ -3935,6 +3986,16 @@ function make_decision!(
         )
     end
 
+    # S2 per-opportunity edge (gated): mirror the agent's COMPONENT knowledge
+    # (kb.agent_knowledge[id]) onto agent.resources so both ladder hook sites
+    # (calculate_investment_utility and evaluate_portfolio_opportunities) can read
+    # it without threading the KnowledgeBase. Off / no-engine → left empty, so
+    # strategy_edge_context falls back to sector familiarity (byte-identical).
+    if agent.config.ENABLE_OPPORTUNITY_COMPONENTS && !isnothing(innovation_engine)
+        agent.resources.component_knowledge =
+            get(innovation_engine.knowledge_base.agent_knowledge, agent.id, Set{String}())
+    end
+
     # Choose AI level
     ai_level = if !isnothing(ai_level_override)
         ai_level_override
@@ -3974,8 +4035,8 @@ function make_decision!(
         # Test/diagnostic fallback. See empty_perception in models.jl.
         empty_perception()
     end
-    # A1 open-action pivot review (the design notes).
-    # Sited FIRST among the decision-economics steps ( (design note)
+    # A1 open-action pivot review (the strategy-ladder design notes).
+    # Sited FIRST among the decision-economics steps (engine invariants F3c,
     # 2026-06-09) — BEFORE estimate_operational_costs and ALL action-utility
     # calculations — so every utility sees post-pivot capital and portfolio
     # state consistently (previously invest utility saw pre-pivot state while
@@ -4004,7 +4065,7 @@ function make_decision!(
     capital_before_decision_analysis = get_capital(agent)
     invest_utility = calculate_investment_utility(agent, opportunities, market_conditions, perception; ai_level=decision_ai_level, info_system=info_system)
     decision_ai_analysis_cost = max(0.0, capital_before_decision_analysis - get_capital(agent))
-    # S3a hook (AGI strategy ladder, the design notes):
+    # S3a hook (AGI strategy ladder, the strategy-ladder design notes):
     # complement-seeking explore/innovate shift, computed AFTER
     # calculate_investment_utility so the agent's own Information objects for
     # this round's visible set are already in the cache (re-reading paid-for
@@ -4068,10 +4129,10 @@ function make_decision!(
     # every live agent's invest/innovate/explore/maintain choice is sampled
     # from this softmax each round.
     #
-    # Emergence audit P10 (DECISION_TEMPERATURE = T): T divides the utilities
+    # Emergence audit (DECISION_TEMPERATURE = T): T divides the utilities
     # pre-softmax by multiplying the calibrated base temperature —
     # exp(u / (base * T)) ≡ exp((u / T) / base). T > 1 flattens the choice
-    # distribution toward uniform (a mixed-equilibrium conjecture:
+    # distribution toward uniform (the mixed-equilibrium conjecture:
     # noisy humans approximate the mixed-strategy congestion equilibrium);
     # T < 1 sharpens toward argmax. BIT-IDENTITY at T = 1.0: the default path
     # short-circuits before the multiply (dividing by literal 1.0 would be
@@ -4114,7 +4175,7 @@ function make_decision!(
             early_signals=early_signals,
             signal_weight=signal_weight
         )
-        # Same-round hygiene (design note): an opportunity
+        # Same-round hygiene (engine invariants F3c, 2026-06-09): an opportunity
         # the agent just liquidated this round cannot be re-entered in the
         # same round — re-committing at full price seconds after paying the
         # liquidation haircut is pure churn, not a decision.

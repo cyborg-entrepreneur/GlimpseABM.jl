@@ -101,6 +101,7 @@ mutable struct Opportunity
     novelty_score::Float64              # 0.0 = established, 1.0 = very novel
     total_invested::Float64             # Track total investment for capacity constraints
     capacity::Float64                   # Max investment capacity
+    knowledge_components::Vector{String}  # S2 per-opportunity edge: component IDs the niche draws on (gated; empty unless ENABLE_OPPORTUNITY_COMPONENTS)
 end
 
 function Opportunity(;
@@ -135,6 +136,7 @@ function Opportunity(;
     novelty_score::Float64 = 0.0,       # 0.0 = established, 1.0 = very novel
     total_invested::Float64 = 0.0,      # Track total investment
     capacity::Float64 = 0.0,            # 0 = sentinel: sample from config
+    knowledge_components::Vector{String} = String[],  # S2 per-opportunity edge (gated; default empty = byte-identical)
     # Seedable RNG for reproducible capacity sampling. Default falls back to
     # global rand() for backwards compatibility with ad-hoc Opportunity
     # construction, but production paths (market._create_realistic_opportunity,
@@ -151,7 +153,8 @@ function Opportunity(;
         required_discovery_threshold, combination_uncertainty,
         combination_signature, market_impact, origin_innovation_id,
         crowding_penalty, component_scarcity,
-        novelty_score, total_invested, capacity
+        novelty_score, total_invested, capacity,
+        knowledge_components
     )
 
     # Initialize base_failure_potential if not set
@@ -166,8 +169,15 @@ function Opportunity(;
     # capacity=… and keep their explicit value. Uses the passed RNG so
     # reproducibility is preserved across seeds.
     if opp.capacity <= 0.0 && !isnothing(config) && hasfield(typeof(config), :OPPORTUNITY_BASE_CAPACITY)
-        variance = hasfield(typeof(config), :OPPORTUNITY_CAPACITY_VARIANCE) ? config.OPPORTUNITY_CAPACITY_VARIANCE : 0.3
-        opp.capacity = config.OPPORTUNITY_BASE_CAPACITY * (1.0 + (rand(rng) - 0.5) * 2 * variance)
+        niche_sigma = hasfield(typeof(config), :NICHE_SIZE_LOG_SIGMA) ? config.NICHE_SIZE_LOG_SIGMA : 0.0
+        if niche_sigma > 0.0
+            # Heavy-tailed niche/market size: mean-preserving lognormal (most niches
+            # small, a few enormous) — the venture-realistic heavy tail at the SIZE level.
+            opp.capacity = config.OPPORTUNITY_BASE_CAPACITY * exp(niche_sigma * randn(rng) - 0.5 * niche_sigma^2)
+        else
+            variance = hasfield(typeof(config), :OPPORTUNITY_CAPACITY_VARIANCE) ? config.OPPORTUNITY_CAPACITY_VARIANCE : 0.3
+            opp.capacity = config.OPPORTUNITY_BASE_CAPACITY * (1.0 + (rand(rng) - 0.5) * 2 * variance)
+        end
     end
 
     return opp
@@ -187,8 +197,15 @@ function realized_return(
     investor_tier::Union{String,Nothing} = nothing;
     rng::Random.AbstractRNG = Random.default_rng()
 )::Float64
+    config = opp.config
+    # Heavy-tail returns (2026-06-15): when enabled, realized returns track the
+    # opportunity's full latent value (bounded by RETURN_CLAMP_MAX); the convex
+    # crowding penalty below still dilutes crowded opportunities. Off keeps the
+    # legacy thin caps. `rcm` is the shared ceiling for every lifted cap.
+    heavy = !isnothing(config) && config.HEAVY_TAIL_RETURNS
+    rcm = isnothing(config) ? 200.0 : Float64(config.RETURN_CLAMP_MAX)
     # Base multiple from latent potential
-    base_multiple = clamp(coalesce(opp.latent_return_potential, 1.0), 0.3, 10.0)
+    base_multiple = clamp(coalesce(opp.latent_return_potential, 1.0), 0.3, heavy ? rcm : 10.0)
 
     # Regime effects
     regime_return = Float64(market_conditions.regime_return_multiplier)
@@ -220,8 +237,6 @@ function realized_return(
         base_multiple *= Float64(get(sector_adjust, "return", 1.0))
         risk_signal = clamp(risk_signal * Float64(get(sector_adjust, "failure", 1.0)), 0.05, 0.95)
     end
-
-    config = opp.config
 
     execution_multiplier = 1.0
     if !isnothing(config) && !isnothing(investor_tier) &&
@@ -263,9 +278,10 @@ function realized_return(
         0.0
     end
 
-    # Scarcity ceiling
+    # Scarcity ceiling (legacy thin-tail path). Heavy-tail path lets the central
+    # tendency track the opportunity's latent value up to RETURN_CLAMP_MAX.
     scarcity_ceiling = 4.5 + 1.4 * scarcity_signal
-    base_mean = clamp(base_mean, 0.2, min(15.0, scarcity_ceiling))
+    base_mean = clamp(base_mean, 0.2, heavy ? rcm : min(15.0, scarcity_ceiling))
 
     # =========================================================================
     # CROWDING PENALTY
@@ -401,7 +417,7 @@ function realized_return(
     # Higher quality opportunities have higher floor returns
     # Calibrated so uncrowded median ≈ 0.95×, mean ≈ 1.2× (matches VC empirics:
     # ~55% loss rate, mean > median due to power-law tail, portfolio mean ~1.07×)
-    x_min = clamp(base_mean * 0.24, 0.15, 5.0)
+    x_min = clamp(base_mean * 0.24, 0.15, heavy ? rcm : 5.0)
 
     # Sample from Pareto distribution: X = x_m / U^(1/α)
     u = rand(rng)
@@ -466,7 +482,7 @@ function realized_return(
     # opportunities. The 150 coefficient lets the headroom formula actually
     # reach 200× when scarcity and novelty both max out (20 + 150·1.2 = 200).
     scarcity_headroom = 20.0 + 150.0 * max(0.0, scarcity_signal + novelty_signal - 0.8)
-    upper_bound = clamp(scarcity_headroom, 5.0, 200.0)
+    upper_bound = heavy ? rcm : clamp(scarcity_headroom, 5.0, 200.0)
     # Lower bound is a return multiple in [0,1]: 0.0 = total loss, 1.0 = break-even.
     lower_bound = isnothing(config) ? 0.0 : clamp(config.RETURN_LOWER_BOUND, 0.0, 1.0)
 

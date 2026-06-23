@@ -71,7 +71,7 @@ const OUTPUT_DIR = get(
         "..",
         "results",
         "knightian_weight_family_sweep_$(Dates.format(now(), "yyyymmdd_HHMMSS"))",
-   ),
+    ),
 )
 
 starts_with_any(value::String, prefixes) = any(prefix -> startswith(value, prefix), prefixes)
@@ -81,7 +81,7 @@ function is_driver_weight_field(name::Symbol)
     has_driver_token = any(
         token -> occursin(token, text),
         ("weight", "reduction", "increase", "drag", "discount", "multiplier", "bump"),
-   )
+    )
     is_baseline_token =
         text == "base_level" ||
         endswith(text, "_base") ||
@@ -119,7 +119,7 @@ function replace_producer_weights(
         practical_indeterminism=practical,
         agentic_novelty=novelty,
         competitive_recursion=recursion,
-   )
+    )
 end
 
 function scale_perception_family(
@@ -136,7 +136,7 @@ function scale_perception_family(
             "avg_knowledge_",
             "discovery_",
             "truly_unknown_",
-       )
+        )
     elseif family == "perception_actor_ignorance"
         ("actor_", "analytical_", "opportunity_signal_gap_")
     elseif family == "perception_practical_indeterminism"
@@ -150,7 +150,7 @@ function scale_perception_family(
             "opportunity_overlap_",
             "opportunity_competition_",
             "ai_herding_pressure_",
-       )
+        )
     elseif family == "perception_agentic_novelty"
         ("novelty_",)
     elseif family == "perception_competitive_recursion"
@@ -173,28 +173,28 @@ function apply_family_multiplier!(config::EmergentConfig, family::String, multip
         config.KNIGHTIAN_PRODUCER_WEIGHTS = replace_producer_weights(
             producer;
             actor=scale_struct_fields(producer.actor_ignorance, multiplier),
-       )
+        )
     elseif family == "producer_practical_indeterminism"
         config.KNIGHTIAN_PRODUCER_WEIGHTS = replace_producer_weights(
             producer;
             practical=scale_struct_fields(producer.practical_indeterminism, multiplier),
-       )
+        )
     elseif family == "producer_agentic_novelty"
         config.KNIGHTIAN_PRODUCER_WEIGHTS = replace_producer_weights(
             producer;
             novelty=scale_struct_fields(producer.agentic_novelty, multiplier),
-       )
+        )
     elseif family == "producer_competitive_recursion"
         config.KNIGHTIAN_PRODUCER_WEIGHTS = replace_producer_weights(
             producer;
             recursion=scale_struct_fields(producer.competitive_recursion, multiplier),
-       )
+        )
     elseif startswith(family, "perception_")
         config.UNCERTAINTY_PERCEPTION_WEIGHTS = scale_perception_family(
             config.UNCERTAINTY_PERCEPTION_WEIGHTS,
             multiplier,
             family,
-       )
+        )
     else
         error("Unknown sweep family: $family")
     end
@@ -208,7 +208,7 @@ function build_mixed_sim(seed::Int, family::String, multiplier::Float64)
         RANDOM_SEED=seed,
         AGENT_AI_MODE="fixed",
         enable_round_logging=false,
-   )
+    )
     apply_family_multiplier!(config, family, multiplier)
 
     initial_dist = Dict(tier => 0.25 for tier in AI_TIERS)
@@ -216,10 +216,10 @@ function build_mixed_sim(seed::Int, family::String, multiplier::Float64)
         config=config,
         initial_tier_distribution=initial_dist,
         seed=seed,
-   )
+    )
 
- # rng is consumed only by the assignment shuffle, so drawing assignments
- # after construction is equivalent to drawing them before (same stream).
+    # rng is consumed only by the assignment shuffle, so drawing assignments
+    # after construction is equivalent to drawing them before (same stream).
     apply_balanced_fixed_tiers!(sim, balanced_tier_assignments(N_AGENTS, rng))
 
     return sim
@@ -233,9 +233,9 @@ end
 function tail_mean(history::Vector{Dict{String,Any}}, key::String; window::Int=10)
     isempty(history) && return NaN
     start_idx = max(1, length(history) - window + 1)
- # Per-tier round telemetry emits NaN for empty cells (no agents of that
- # tier in a round); keep only finite values so empty cells drop out of the
- # tail mean instead of deflating it. No finite values at all -> NaN.
+    # Per-tier round telemetry emits NaN for empty cells (no agents of that
+    # tier in a round); keep only finite values so empty cells drop out of the
+    # tail mean instead of deflating it. No finite values at all -> NaN.
     values = [
         v for v in (numeric_history_value(row, key) for row in history[start_idx:end])
         if isfinite(v)
@@ -255,7 +255,7 @@ function run_one(cell_idx::Int, run_idx::Int, family::String, multiplier::Float6
         "seed" => seed,
         "family" => family,
         "multiplier" => multiplier,
-   )
+    )
 
     tier_survival = Dict{String,Float64}()
     for tier in AI_TIERS
@@ -294,7 +294,7 @@ function run_one(cell_idx::Int, run_idx::Int, family::String, multiplier::Float6
         "mean_info_quality_used_advanced",
         "mean_info_quality_used_premium",
         "total_ai_analysis_cost",
-   )
+    )
         result["final_$(key)"] = numeric_history_value(final_history, key)
         result["tail_mean_$(key)"] = tail_mean(sim.history, key)
     end
@@ -338,7 +338,7 @@ function summarize_results(results::Vector{Dict{String,Any}}, cells)
     numeric_keys = sort(unique(
         key for row in results for (key, value) in row
         if value isa Real && !(key in ("cell_idx", "run_idx", "seed", "multiplier"))
-   ))
+    ))
 
     summaries = Dict{String,Any}[]
     for (idx, cell) in enumerate(cells)
@@ -348,7 +348,7 @@ function summarize_results(results::Vector{Dict{String,Any}}, cells)
             "family" => cell.family,
             "multiplier" => cell.multiplier,
             "n_runs" => length(rows),
-       )
+        )
         for key in numeric_keys
             values = [Float64(row[key]) for row in rows if haskey(row, key) && row[key] isa Real]
             summary["mean_$(key)"] = safe_mean(values)
@@ -375,7 +375,7 @@ function print_summary(summaries)
         "TE_a",
         "TE_p",
         "horiz",
-   )
+    )
     println("  " * "-"^96)
     for row in summaries
         horizon = safe_mean([
@@ -395,7 +395,7 @@ function print_summary(summaries)
             get(row, "mean_advanced_te_pp_vs_none", 0.0),
             get(row, "mean_premium_te_pp_vs_none", 0.0),
             horizon,
-       )
+        )
     end
 end
 

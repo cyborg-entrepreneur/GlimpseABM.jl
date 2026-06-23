@@ -30,9 +30,9 @@ const N_OPPS = 50
     market = MarketEnvironment(config; rng=MersenneTwister(42))
     info_system = InformationSystem(config)
 
- # Build a fixed opportunity set with varying latent_return, novelty,
- # complexity. We keep the same opportunities across all trials so the
- # only randomness is the tier-noise injection in get_information.
+    # Build a fixed opportunity set with varying latent_return, novelty,
+    # complexity. We keep the same opportunities across all trials so the
+    # only randomness is the tier-noise injection in get_information.
     base_rng = MersenneTwister(1)
     opportunities = Opportunity[]
     for i in 1:N_OPPS
@@ -49,9 +49,9 @@ const N_OPPS = 50
     rank_corr_sum = 0.0
 
     for trial in 1:N_TRIALS
- # Two agents with same trait seed but different fixed AI tiers,
- # using the same RNG seed for tier-noise to make the comparison fair
- # (any difference comes from AI mechanism, not from RNG drift)
+        # Two agents with same trait seed but different fixed AI tiers,
+        # using the same RNG seed for tier-noise to make the comparison fair
+        # (any difference comes from AI mechanism, not from RNG drift)
         seed = 1000 + trial
 
         agent_none = EmergentAgent(1, config;
@@ -63,7 +63,7 @@ const N_OPPS = 50
             fixed_ai_level="premium",
             rng=MersenneTwister(seed))
 
- # Reset info_system cache between trials so tier-noise samples fresh
+        # Reset info_system cache between trials so tier-noise samples fresh
         empty!(info_system.information_cache)
 
         evals_none = GlimpseABM.evaluate_portfolio_opportunities(
@@ -85,7 +85,7 @@ const N_OPPS = 50
         overlap = length(intersect(top_none, top_premium))
         top3_overlap_sum += overlap
 
- # Spearman rank correlation across full opportunity ranking
+        # Spearman rank correlation across full opportunity ranking
         ranks_none = Dict(e["opportunity"].id => i for (i, e) in enumerate(evals_none))
         ranks_premium = Dict(e["opportunity"].id => i for (i, e) in enumerate(evals_premium))
         opp_ids = collect(keys(ranks_none))
@@ -102,16 +102,16 @@ const N_OPPS = 50
 
     @info "Tier-divergence regression test results" top1_match_rate avg_top3_overlap avg_rank_corr
 
- # Primary assertion: top-1 should NOT always agree
- # If tiers always pick the same top opportunity, mechanism is bypassed.
- # Allow up to 60% top-1 agreement (generous floor; in practice expect ~30-40%)
+    # Primary assertion: top-1 should NOT always agree
+    # If tiers always pick the same top opportunity, mechanism is bypassed.
+    # Allow up to 60% top-1 agreement (generous floor; in practice expect ~30-40%)
     @test top1_match_rate <= 0.60
 
- # Secondary assertion: top-3 overlap should not be 3.0 (perfect agreement)
- # Allow up to 2.5 average overlap (out of 3); if 3.0 they always agree
+    # Secondary assertion: top-3 overlap should not be 3.0 (perfect agreement)
+    # Allow up to 2.5 average overlap (out of 3); if 3.0 they always agree
     @test avg_top3_overlap < 2.8
 
- # Tertiary assertion: full-ranking correlation should be bounded away from 1.0
- # Tier-noise should produce some disagreement on the full ranking
+    # Tertiary assertion: full-ranking correlation should be bounded away from 1.0
+    # Tier-noise should produce some disagreement on the full ranking
     @test avg_rank_corr < 0.95
 end

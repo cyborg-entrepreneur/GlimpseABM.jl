@@ -1,18 +1,18 @@
-# Audit-addendum knob tests (the design notes):
+# Reviewer-addendum knob tests (the adoption-family design notes):
 # AI_BIAS_INTENSITY (NO_AI_BIAS cell) + WEALTH_COMPUTE_SCALING
 # (WEALTH_SCALED_COMPUTE cell).
 #
 # Battery (mirrors test_emergence_audit.jl):
-# 1. Defaults — both knobs default to their neutral values.
-# 2. Bias behavioral — intensity 0 zeroes bias_applied where the domain
-# capability carries nonzero bias; intensity scales it linearly.
-# 3. Bias default neutrality — explicit 1.0 is bit-identical to implicit
-# (multiplication by exactly 1.0 is an IEEE identity; fingerprint sim).
-# 4. Wealth behavioral — under scaling=1.0 a capital-rich agent's perceived
-# menu is larger than a capital-poor agent's from the same pool; under
-# the 0.0 default, capital does not move the menu size.
-# 5. Wealth default neutrality — explicit 0.0 bit-identical to implicit
-# (the guard skips the block entirely).
+#   1. Defaults — both knobs default to their neutral values.
+#   2. Bias behavioral — intensity 0 zeroes bias_applied where the domain
+#      capability carries nonzero bias; intensity scales it linearly.
+#   3. Bias default neutrality — explicit 1.0 is bit-identical to implicit
+#      (multiplication by exactly 1.0 is an IEEE identity; fingerprint sim).
+#   4. Wealth behavioral — under scaling=1.0 a capital-rich agent's perceived
+#      menu is larger than a capital-poor agent's from the same pool; under
+#      the 0.0 default, capital does not move the menu size.
+#   5. Wealth default neutrality — explicit 0.0 bit-identical to implicit
+#      (the guard skips the block entirely).
 
 using Test
 using Random
@@ -44,7 +44,7 @@ function ra_fingerprint_sim(config; seed::Int = 4242, rounds::Int = 6)
         capitals = [GlimpseABM.get_capital(a) for a in sim.agents],
         alive = [a.alive for a in sim.agents],
         actions = [copy(a.action_history) for a in sim.agents],
-   )
+    )
 end
 
 function ra_test_opportunity(id::String)
@@ -55,7 +55,7 @@ function ra_test_opportunity(id::String)
         complexity = 0.4,
         sector = "tech",
         discovered = true,
-   )
+    )
 end
 
 # Force a known nonzero bias into EVERY premium domain capability so the
@@ -72,7 +72,7 @@ end
 
 # ── 1. defaults ──────────────────────────────────────────────────────────────
 
-@testset "Robustness addendum: knob defaults are neutral" begin
+@testset "Reviewer addendum: knob defaults are neutral" begin
     config = EmergentConfig()
     @test config.AI_BIAS_INTENSITY == 1.0
     @test config.WEALTH_COMPUTE_SCALING == 0.0
@@ -106,7 +106,7 @@ end
 # ── 4. wealth behavioral ────────────────────────────────────────────────────
 
 @testset "WEALTH_COMPUTE_SCALING widens rich menus, narrows poor ones" begin
- # Pool large enough that the visibility budget binds for premium.
+    # Pool large enough that the visibility budget binds for premium.
     pool = [ra_test_opportunity("ra_w_opp_$(i)") for i in 1:120]
 
     function menu_sizes(scaling::Float64)
@@ -128,7 +128,7 @@ end
     n_rich_on, n_poor_on = menu_sizes(1.0)
     @test n_rich_on > n_poor_on + 10  # 16x budget gap is decisive, not marginal
 
- # Default off: capital does not move the menu.
+    # Default off: capital does not move the menu.
     n_rich_off, n_poor_off = menu_sizes(0.0)
     @test abs(n_rich_off - n_poor_off) < 10
 end

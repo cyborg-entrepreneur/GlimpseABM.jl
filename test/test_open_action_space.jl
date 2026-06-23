@@ -1,26 +1,26 @@
-# Open-action extension tests (the design notes
+# Open-action extension tests (the strategy-ladder design notes
 # §Open-action extension): A1 ENABLE_PIVOT + A2 ENABLE_DIRECTED_CREATION.
 #
 # Battery (mirrors test_strategy_ladder.jl's engineering pattern):
-# 1. Config validation — malformed haircut bounds / negative strength error
-# loudly at initialize! and at first use.
-# 2. Default neutrality — both flags off is bit-identical to the implicit
-# default model; the open-action debug counter stays 0 over a full
-# flags-off simulation; an enabled simulation does enter the code.
-# 3. Accounting — a constructed pivot recovers committed × haircut exactly,
-# reduces opp.total_invested exactly once, removes the record (maturity
-# can never double-pay), and a later death-release of a stale reference
-# cannot double-release (idempotent with A5's marker).
-# 4. Observability — pivot decision and creation-bias density invariant to
-# hidden-field mutations (latent_*, hidden_factors, contains_hallucination,
-# actual_accuracy); responsive to observable mutations.
-# 5. Behavioral A1 — under perceived-crowding deterioration an ENABLE_PIVOT
-# agent exits a holding a default agent keeps; in-sim pivot telemetry > 0.
-# 6. Behavioral A2 — with a crowded-vs-sparse perceived density, directed
-# creation shifts the innovation-sector distribution toward sparse
-# sectors vs the deterministic default (fixed seed, many draws).
-# 7. Interaction — the OPEN_ACTION_AGI_NATIVE_MARKET cell (both flags +
-# agi_native on all tiers) builds and a tiny sim runs end-to-end.
+#   1. Config validation — malformed haircut bounds / negative strength error
+#      loudly at initialize! and at first use.
+#   2. Default neutrality — both flags off is bit-identical to the implicit
+#      default model; the open-action debug counter stays 0 over a full
+#      flags-off simulation; an enabled simulation does enter the code.
+#   3. Accounting — a constructed pivot recovers committed × haircut exactly,
+#      reduces opp.total_invested exactly once, removes the record (maturity
+#      can never double-pay), and a later death-release of a stale reference
+#      cannot double-release (idempotent with A5's marker).
+#   4. Observability — pivot decision and creation-bias density invariant to
+#      hidden-field mutations (latent_*, hidden_factors, contains_hallucination,
+#      actual_accuracy); responsive to observable mutations.
+#   5. Behavioral A1 — under perceived-crowding deterioration an ENABLE_PIVOT
+#      agent exits a holding a default agent keeps; in-sim pivot telemetry > 0.
+#   6. Behavioral A2 — with a crowded-vs-sparse perceived density, directed
+#      creation shifts the innovation-sector distribution toward sparse
+#      sectors vs the deterministic default (fixed seed, many draws).
+#   7. Interaction — the OPEN_ACTION_AGI_NATIVE_MARKET cell (both flags +
+#      agi_native on all tiers) builds and a tiny sim runs end-to-end.
 
 using Test
 using Random
@@ -59,8 +59,8 @@ function oa_test_perception(; crowding::Float64 = 0.0,
             "decision_confidence" => 0.5,
             "return_evidence" => 0.0,
             "confidence_saturation_hit" => 0.0,
-       ),
-   )
+        ),
+    )
 end
 
 function oa_test_config(; pivot::Bool = false, directed::Bool = false,
@@ -90,7 +90,7 @@ function oa_test_opportunity(id::String; sector::String = "tech",
         sector = sector,
         competition = competition,
         discovered = true,
-   )
+    )
 end
 
 """
@@ -122,7 +122,7 @@ function oa_agent_with_investment(config;
         "sector" => opp.sector,
         "decision_confidence" => decision_confidence,
         "perceived_crowding_at_commitment" => crowding_at_commitment,
-   )
+    )
     push!(agent.active_investments, investment)
     return agent, opp, investment
 end
@@ -137,7 +137,7 @@ function oa_fingerprint_sim(config; seed::Int = 4242, rounds::Int = 6)
         alive = [a.alive for a in sim.agents],
         actions = [copy(a.action_history) for a in sim.agents],
         sim = sim,
-   )
+    )
 end
 
 # ── 1. config validation ─────────────────────────────────────────────────────
@@ -151,7 +151,7 @@ end
         EmergentConfig(PIVOT_HAIRCUT_FLOOR = -0.1))
     @test_throws ErrorException GlimpseABM.initialize!(
         EmergentConfig(DIRECTED_CREATION_STRENGTH = -1.0))
- # F3a: the promoted pivot-trigger fields are validated too.
+    # F3a: the promoted pivot-trigger fields are validated too.
     @test_throws ErrorException GlimpseABM.initialize!(
         EmergentConfig(PIVOT_REDEPLOY_MARGIN = -0.05))
     @test_throws ErrorException GlimpseABM.initialize!(
@@ -159,24 +159,24 @@ end
     @test_throws ErrorException GlimpseABM.initialize!(
         EmergentConfig(PIVOT_DETERIORATION_GAIN = -1.0))
 
- # Defaults are valid (validation lives at initialize!; the per-round
- # re-validation in the pivot review was removed as hot-path hygiene — F6).
+    # Defaults are valid (validation lives at initialize!; the per-round
+    # re-validation in the pivot review was removed as hot-path hygiene — F6).
     @test GlimpseABM.initialize!(EmergentConfig()) isa EmergentConfig
 end
 
 # ── 2. default neutrality ────────────────────────────────────────────────────
 
 @testset "Open action: default neutrality (flags off bit-identical)" begin
- # F6: the debug counter is increment-gated behind a flag (production
- # default false); the structural-neutrality assertions enable it so the
- # ==0 guarantee stays a guarantee about reachable code paths.
+    # F6: the debug counter is increment-gated behind a flag (production
+    # default false); the structural-neutrality assertions enable it so the
+    # ==0 guarantee stays a guarantee about reachable code paths.
     GlimpseABM.set_open_action_count_enabled!(true)
     GlimpseABM.reset_open_action_eval_count!()
     cfg_default = EmergentConfig(N_AGENTS = 24, N_ROUNDS = 6, RANDOM_SEED = 7,
                                  enable_round_logging = false)
     GlimpseABM.initialize!(cfg_default)
     fp_default = oa_fingerprint_sim(cfg_default; seed = 9001)
- # Structural proof: no open-action code path is reachable when disabled.
+    # Structural proof: no open-action code path is reachable when disabled.
     @test GlimpseABM.open_action_eval_count() == 0
 
     cfg_off = EmergentConfig(N_AGENTS = 24, N_ROUNDS = 6, RANDOM_SEED = 7,
@@ -189,8 +189,8 @@ end
     @test fp_default.actions == fp_off.actions
     @test GlimpseABM.open_action_eval_count() == 0
 
- # An enabled simulation DOES enter open-action code (the counter guard is
- # alive, not vacuous).
+    # An enabled simulation DOES enter open-action code (the counter guard is
+    # alive, not vacuous).
     cfg_on = EmergentConfig(N_AGENTS = 24, N_ROUNDS = 6, RANDOM_SEED = 7,
                             ENABLE_PIVOT = true, ENABLE_DIRECTED_CREATION = true,
                             enable_round_logging = false)
@@ -199,8 +199,8 @@ end
     @test GlimpseABM.open_action_eval_count() > 0
     GlimpseABM.reset_open_action_eval_count!()
 
- # With the debug flag OFF (production default), the counter never moves
- # even in an enabled simulation — the increments are debug-only overhead.
+    # With the debug flag OFF (production default), the counter never moves
+    # even in an enabled simulation — the increments are debug-only overhead.
     GlimpseABM.set_open_action_count_enabled!(false)
     cfg_on2 = EmergentConfig(N_AGENTS = 24, N_ROUNDS = 6, RANDOM_SEED = 7,
                              ENABLE_PIVOT = true, ENABLE_DIRECTED_CREATION = true,
@@ -210,8 +210,8 @@ end
     @test GlimpseABM.open_action_eval_count() == 0
     GlimpseABM.set_open_action_count_enabled!(true)
 
- # Disabled review short-circuits before ANY computation, even with a
- # pivot-ripe portfolio in hand.
+    # Disabled review short-circuits before ANY computation, even with a
+    # pivot-ripe portfolio in hand.
     cfg_hold = oa_test_config(pivot = false)
     agent, opp, _ = oa_agent_with_investment(cfg_hold; estimated_return = 0.0)
     invested_before = opp.total_invested
@@ -228,11 +228,11 @@ end
 
 @testset "Open action A1: pivot accounting (conservation, single release, no double payout)" begin
     config = oa_test_config(pivot = true)
- # Constructed trigger: committed at crowding 0.0 / confidence 0.2 with a
- # 1.2× expected multiple; current perceived crowding 0.9 ⇒ deterioration
- # 0.9 × (1.5 − 0.2) clamps to d_eff = 1.0 ⇒ expected residual 0 < any
- # recoverable value ⇒ pivot. At round 8 (invested round 2, ttm 12):
- # progress 0.5 ⇒ haircut 0.40 + 0.35·0.5 = 0.575 ⇒ recovered = 28,750.
+    # Constructed trigger: committed at crowding 0.0 / confidence 0.2 with a
+    # 1.2× expected multiple; current perceived crowding 0.9 ⇒ deterioration
+    # 0.9 × (1.5 − 0.2) clamps to d_eff = 1.0 ⇒ expected residual 0 < any
+    # recoverable value ⇒ pivot. At round 8 (invested round 2, ttm 12):
+    # progress 0.5 ⇒ haircut 0.40 + 0.35·0.5 = 0.575 ⇒ recovered = 28,750.
     agent, opp, investment = oa_agent_with_investment(config)
     capital_before = GlimpseABM.get_capital(agent)
     returned_before = agent.total_returned
@@ -253,7 +253,7 @@ end
     @test opp.total_invested == base_invested                # released exactly once
     @test isempty(agent.active_investments)                  # record removed
 
- # Honest learning record, flagged as censored salvage (F2d).
+    # Honest learning record, flagged as censored salvage (F2d).
     last = agent.recent_outcomes[end]
     @test last["action"] == "pivot"
     @test last["success"] == false
@@ -263,44 +263,44 @@ end
     @test last["censored_salvage"] === true
     @test investment["censored_salvage"] === true            # flag on the source record too
 
- # F2d tier evidence: the recovery multiple entered the invested tier's
- # ROI history and shifted the tier belief downward (0.575 < 1).
+    # F2d tier evidence: the recovery multiple entered the invested tier's
+    # ROI history and shifted the tier belief downward (0.575 < 1).
     roi_hist = agent.ai_learning.tier_roi_history["premium"]
     @test length(roi_hist) == tier_roi_before + 1
     @test roi_hist[end] ≈ 0.575 - 1.0
     @test GlimpseABM.get_tier_belief_mean(agent.ai_learning, "premium") < tier_belief_before
 
- # F2c calibration: one confidence-outcome observation, on the investment
- # channel (a pivot resolves an investment), mirroring maturity.
+    # F2c calibration: one confidence-outcome observation, on the investment
+    # channel (a pivot resolves an investment), mirroring maturity.
     diag = agent.confidence_outcome_diagnostics
     @test diag.obs_count == conf_obs_before + 1
     @test diag.investment_obs_count >= 1
 
- # F2e Boolean channels: success/failure counters stay maturity-only.
+    # F2e Boolean channels: success/failure counters stay maturity-only.
     @test agent.success_count == 0
     @test agent.failure_count == 0
 
- # Maturity processing cannot double-pay: at the original maturity round
- # there is nothing left to mature and capital is unchanged.
+    # Maturity processing cannot double-pay: at the original maturity round
+    # there is nothing left to mature and capital is unchanged.
     sim = EmergentSimulation(config = config, seed = 77)
     capital_at_pivot = GlimpseABM.get_capital(agent)
     matured = GlimpseABM.process_matured_investments!(agent, sim.market, 14)
     @test isempty(matured)
     @test GlimpseABM.get_capital(agent) == capital_at_pivot
 
- # Second review is a no-op (idempotent).
+    # Second review is a no-op (idempotent).
     @test GlimpseABM.review_and_pivot_investments!(agent, 9, perception) ==
           (0, 0.0, 0.0, Set{String}())
     @test opp.total_invested == base_invested
 
- # Death after pivot cannot double-release — even a STALE reference to the
- # pivoted record is skipped via the shared A5 release marker.
+    # Death after pivot cannot double-release — even a STALE reference to the
+    # pivoted record is skipped via the shared A5 release marker.
     push!(agent.active_investments, investment)
     GlimpseABM._release_inflight_capital_at_death!(agent)
     @test opp.total_invested == base_invested
 
- # And the review never touches already-due investments (they belong to
- # maturity processing).
+    # And the review never touches already-due investments (they belong to
+    # maturity processing).
     agent2, opp2, _ = oa_agent_with_investment(config; maturity_round = 8,
                                                estimated_return = 0.0, seed = 6)
     invested2 = opp2.total_invested
@@ -310,15 +310,15 @@ end
     @test opp2.total_invested == invested2
 end
 
-# ── 3b. pivot mirrors maturity: exposure + ledger (the design notes F2) ──────────
+# ── 3b. pivot mirrors maturity: exposure + ledger (engine invariants F2) ──────────
 
 @testset "Open action A1: pivot records a forecast-disconfirmation exposure (raw estimate)" begin
     config = oa_test_config(pivot = true)
     perception = oa_test_perception(crowding = 0.9)
 
- # The exposure must be scored against the commitment-time INSTRUMENT
- # estimate (F1 raw), not the decision-basis estimated_return. Store
- # diverging values: decision 1.0 (shaded), instrument 2.0 (raw).
+    # The exposure must be scored against the commitment-time INSTRUMENT
+    # estimate (F1 raw), not the decision-basis estimated_return. Store
+    # diverging values: decision 1.0 (shaded), instrument 2.0 (raw).
     agent, opp, investment = oa_agent_with_investment(config; estimated_return = 1.0)
     investment["instrument_estimated_return"] = 2.0
     env = KnightianUncertaintyEnvironment(config; rng = MersenneTwister(404))
@@ -332,12 +332,12 @@ end
     @test ev["ai_level"] == "premium"
     @test ev["ai_assisted"] === true            # from the invested tier label
     @test ev["success"] === false
- # return_error = |actual − pred| / max(1, |pred|) with actual =
- # recovered/amount = 0.575 and pred = the RAW 2.0 (not the shaded 1.0).
+    # return_error = |actual − pred| / max(1, |pred|) with actual =
+    # recovered/amount = 0.575 and pred = the RAW 2.0 (not the shaded 1.0).
     @test ev["return_error"] ≈ abs(recovered / 50_000.0 - 2.0) / 2.0
 
- # A legacy record with no estimate at all is EXCLUDED from exposure
- # recording (F1 no-estimate rule) but still pivots on the neutral 1.0.
+    # A legacy record with no estimate at all is EXCLUDED from exposure
+    # recording (F1 no-estimate rule) but still pivots on the neutral 1.0.
     agent2, _, inv2 = oa_agent_with_investment(config; seed = 6)
     delete!(inv2, "estimated_return")
     env2 = KnightianUncertaintyEnvironment(config; rng = MersenneTwister(405))
@@ -348,11 +348,11 @@ end
 end
 
 @testset "Open action A1: round ledger closes over pivot recoveries (F2a)" begin
- # Inject a write-off-grade off-market holding so the production round
- # pivots it (same construction as the in-sim telemetry test below), then
- # check the round PnL: capital_returned[invest] must include the pivot
- # recovery, so net_capital_flow_invest - pivot_capital_recovered equals
- # the flow that maturities + new deploys alone would give.
+    # Inject a write-off-grade off-market holding so the production round
+    # pivots it (same construction as the in-sim telemetry test below), then
+    # check the round PnL: capital_returned[invest] must include the pivot
+    # recovery, so net_capital_flow_invest - pivot_capital_recovered equals
+    # the flow that maturities + new deploys alone would give.
     cfg = EmergentConfig(N_AGENTS = 16, N_ROUNDS = 3, RANDOM_SEED = 11,
                          ENABLE_PIVOT = true, enable_round_logging = false)
     GlimpseABM.initialize!(cfg)
@@ -372,15 +372,15 @@ end
         "decision_confidence" => 0.0,
         "perceived_crowding_at_commitment" => 0.0,
         "sector" => opp.sector,
-   ))
+    ))
     stats = GlimpseABM.step!(sim, 1)
     @test stats["pivot_count"] >= 1
     recovered = stats["pivot_capital_recovered"]
     @test recovered > 0.0
- # Round 1 of a fresh sim has no maturities (n_matured == 0), so the
- # invest-side returns this round are EXACTLY the pivot recoveries — the
- # strict closure the old ledger leaked (pivot cash credited to agents but
- # absent from capital_returned["invest"]).
+    # Round 1 of a fresh sim has no maturities (n_matured == 0), so the
+    # invest-side returns this round are EXACTLY the pivot recoveries — the
+    # strict closure the old ledger leaked (pivot cash credited to agents but
+    # absent from capital_returned["invest"]).
     @test stats["n_matured"] == 0
     returned = stats["total_capital_returned_invest"]
     deployed = stats["total_capital_deployed_invest"]
@@ -393,11 +393,11 @@ end
 @testset "Open action: observability (hidden fields inert, observables live)" begin
     config = oa_test_config(pivot = true, directed = true)
 
- # A1: the pivot decision pivots on the agent's STORED commitment-time
- # instrument estimate (F1/F3c: decision-time-stored beliefs — a visible
- # field the agent itself persisted) and must be invariant to every hidden
- # field. Borderline construction: no crowding deterioration, so the
- # stored estimate alone decides — 0.3 (pivot) vs 1.5 (hold).
+    # A1: the pivot decision pivots on the agent's STORED commitment-time
+    # instrument estimate (F1/F3c: decision-time-stored beliefs — a visible
+    # field the agent itself persisted) and must be invariant to every hidden
+    # field. Borderline construction: no crowding deterioration, so the
+    # stored estimate alone decides — 0.3 (pivot) vs 1.5 (hold).
     function run_review(; stored_return::Float64, mutate_hidden::Bool, seed::Int)
         agent, opp, investment = oa_agent_with_investment(config;
             estimated_return = stored_return, decision_confidence = 0.9,
@@ -419,8 +419,8 @@ end
     held = run_review(stored_return = 1.5, mutate_hidden = false, seed = 21)
     @test held == (0, 0.0, 0.0, Set{String}())  # observable change flips the decision
 
- # A2: the perceived density estimate reads only sector + competition
- # traces of the visible set.
+    # A2: the perceived density estimate reads only sector + competition
+    # traces of the visible set.
     opps = [oa_test_opportunity("d1"; sector = "tech", competition = 0.8),
             oa_test_opportunity("d2"; sector = "tech", competition = 0.6),
             oa_test_opportunity("d3"; sector = "healthcare", competition = 0.0)]
@@ -441,7 +441,7 @@ end
 @testset "Open action A1: pivot agent exits a deteriorated holding a default agent keeps" begin
     perception_crowded = oa_test_perception(crowding = 0.9)
 
- # Same holding, same perceived deterioration; only the flag differs.
+    # Same holding, same perceived deterioration; only the flag differs.
     cfg_pivot = oa_test_config(pivot = true)
     cfg_hold = oa_test_config(pivot = false)
     agent_p, opp_p, _ = oa_agent_with_investment(cfg_pivot; seed = 31)
@@ -452,25 +452,25 @@ end
     @test n_p == 1 && isempty(agent_p.active_investments)   # pivot agent exits
     @test n_h == 0 && length(agent_h.active_investments) == 1  # default holds
 
- # The rule is selective, not a blanket exit: with no deterioration, high
- # original conviction, and a healthy expected multiple, the pivot agent
- # holds too.
+    # The rule is selective, not a blanket exit: with no deterioration, high
+    # original conviction, and a healthy expected multiple, the pivot agent
+    # holds too.
     agent_s, _, _ = oa_agent_with_investment(cfg_pivot;
         estimated_return = 1.5, decision_confidence = 0.9,
         crowding_at_commitment = 0.9, seed = 32)
     n_s, _, _ = GlimpseABM.review_and_pivot_investments!(agent_s, 8, perception_crowded)
     @test n_s == 0 && length(agent_s.active_investments) == 1
 
- # In-sim telemetry: inject a write-off-grade holding (stored estimate 0 ⇒
- # expected residual 0 ⇒ pivot regardless of perceived crowding) and step
- # one production round; the per-round pivot count column registers it.
+    # In-sim telemetry: inject a write-off-grade holding (stored estimate 0 ⇒
+    # expected residual 0 ⇒ pivot regardless of perceived crowding) and step
+    # one production round; the per-round pivot count column registers it.
     cfg_sim = EmergentConfig(N_AGENTS = 16, N_ROUNDS = 3, RANDOM_SEED = 11,
                              ENABLE_PIVOT = true, enable_round_logging = false)
     GlimpseABM.initialize!(cfg_sim)
     sim = EmergentSimulation(config = cfg_sim, seed = 501)
- # Off-market holding with a stored write-off-grade estimate. Since F3c the
- # trigger always reads the decision-time-STORED commitment estimate (the
- # F1 instrument value), never a same-round cache re-query.
+    # Off-market holding with a stored write-off-grade estimate. Since F3c the
+    # trigger always reads the decision-time-STORED commitment estimate (the
+    # F1 instrument value), never a same-round cache re-query.
     opp = oa_test_opportunity("opp_injected_writeoff")
     amount = 10_000.0
     opp.total_invested += amount
@@ -486,7 +486,7 @@ end
         "decision_confidence" => 0.0,
         "perceived_crowding_at_commitment" => 0.0,
         "sector" => opp.sector,
-   ))
+    ))
     stats = GlimpseABM.step!(sim, 1)
     @test stats["pivot_count"] >= 1
     @test stats["pivot_capital_recovered"] > 0.0
@@ -494,8 +494,8 @@ end
     @test !any(inv -> get(inv, "opportunity_id", "") == opp.id,
                sim.agents[1].active_investments)
 
- # Flags-off runs emit the columns with empty-cell conventions intact:
- # zero count (no events is data), NaN rate (undefined over zero pivots).
+    # Flags-off runs emit the columns with empty-cell conventions intact:
+    # zero count (no events is data), NaN rate (undefined over zero pivots).
     cfg_none = EmergentConfig(N_AGENTS = 8, N_ROUNDS = 2, RANDOM_SEED = 11,
                               enable_round_logging = false)
     GlimpseABM.initialize!(cfg_none)
@@ -516,13 +516,13 @@ end
     sectors = collect(config.SECTORS)
     @test length(sectors) >= 2
 
- # Reactive default: deterministic knowledge-domain mapping, zero RNG.
+    # Reactive default: deterministic knowledge-domain mapping, zero RNG.
     anchor = GlimpseABM.determine_innovation_sector(engine, agent, knowledge)
     @test anchor in sectors || anchor == "tech"
     @test GlimpseABM.determine_innovation_sector(engine, agent, knowledge) == anchor
 
- # Perceived density: ALL visible mass on the anchor sector (maximally
- # crowded from this seat); every other sector is sparse.
+    # Perceived density: ALL visible mass on the anchor sector (maximally
+    # crowded from this seat); every other sector is sparse.
     density = Dict{String,Float64}(anchor => 1.0)
     rng = MersenneTwister(99)
     n_draws = 400
@@ -538,16 +538,16 @@ end
     @test sparse_share > 0.5          # creation redirected toward sparse sectors
     @test length(keys(counts)) >= 2   # genuinely distributed, not a swap
 
- # Uniform perceived density ⇒ weights reduce to the anchor prior (the
- # knowledge linkage is redirected, never severed).
+    # Uniform perceived density ⇒ weights reduce to the anchor prior (the
+    # knowledge linkage is redirected, never severed).
     uniform = Dict{String,Float64}(s => 1.0 / length(sectors) for s in sectors)
     w = GlimpseABM.directed_sector_weights(sectors, uniform, anchor, 1.0)
     @test length(w) == length(sectors)
     @test w[findfirst(==(anchor), sectors)] ≈ GlimpseABM.DIRECTED_CREATION_ANCHOR_PRIOR
     @test all(w[i] ≈ 1.0 for i in eachindex(sectors) if sectors[i] != anchor)
 
- # Strength 0 ⇒ density-blind (prior only); higher strength ⇒ stronger
- # tilt away from the crowded sector.
+    # Strength 0 ⇒ density-blind (prior only); higher strength ⇒ stronger
+    # tilt away from the crowded sector.
     w0 = GlimpseABM.directed_sector_weights(sectors, density, anchor, 0.0)
     w2 = GlimpseABM.directed_sector_weights(sectors, density, anchor, 2.0)
     i_anchor = findfirst(==(anchor), sectors)
@@ -556,7 +556,7 @@ end
           GlimpseABM.directed_sector_weights(sectors, density, anchor, 1.0)[i_anchor] /
           sum(GlimpseABM.directed_sector_weights(sectors, density, anchor, 1.0))
 
- # Disabled config ignores any provided density (no redirection, no RNG).
+    # Disabled config ignores any provided density (no redirection, no RNG).
     cfg_off = oa_test_config(directed = false, n_agents = 8)
     sim_off = EmergentSimulation(config = cfg_off, seed = 909)
     @test GlimpseABM.determine_innovation_sector(
@@ -569,8 +569,8 @@ end
 # ── 7. interaction: the maximal AGI-robustness cell ──────────────────────────
 
 @testset "Open action: OPEN_ACTION_AGI_NATIVE_MARKET cell runs end-to-end" begin
- # Both open-action channels + composite AGI-native strategy on all tiers
- # (pre-registered P8 cell; suite row OPEN_ACTION_AGI_NATIVE_MARKET).
+    # Both open-action channels + composite AGI-native strategy on all tiers
+    # (the strongest-claim cell; suite row OPEN_ACTION_AGI_NATIVE_MARKET).
     config = EmergentConfig(N_AGENTS = 24, N_ROUNDS = 8, RANDOM_SEED = 7,
                             ENABLE_PIVOT = true, ENABLE_DIRECTED_CREATION = true,
                             STRATEGY_MODE = "agi_native",
@@ -595,21 +595,21 @@ end
 
 @testset "Open action: pure function contracts" begin
     config = oa_test_config(pivot = true)
- # Haircut: linear floor → ceiling on maturity progress, clamped.
+    # Haircut: linear floor → ceiling on maturity progress, clamped.
     @test GlimpseABM.pivot_haircut(config, 0.0) == 0.40
     @test GlimpseABM.pivot_haircut(config, 1.0) == 0.75
     @test GlimpseABM.pivot_haircut(config, 0.5) ≈ 0.575
     @test GlimpseABM.pivot_haircut(config, -1.0) == 0.40
     @test GlimpseABM.pivot_haircut(config, 2.0) == 0.75
 
- # Trigger: pivot ⇔ expected residual < recoverable × (1 + margin).
+    # Trigger: pivot ⇔ expected residual < recoverable × (1 + margin).
     hold, residual, recoverable = GlimpseABM.pivot_trigger(config;
         progress = 0.5, crowding_now = 0.0, crowding_at_commit = 0.0,
         decision_confidence = 0.5, est_multiple = 1.2)
     @test !hold && residual == 1.2 && recoverable ≈ 0.575
- # A residual just under the margin band pivots; just over holds. The
- # margin is a config field since F3a (default 0.05, formerly a module
- # constant).
+    # A residual just under the margin band pivots; just over holds. The
+    # margin is a config field since F3a (default 0.05, formerly a module
+    # constant).
     margin = config.PIVOT_REDEPLOY_MARGIN
     @test margin == 0.05
     below, _, _ = GlimpseABM.pivot_trigger(config;
@@ -619,8 +619,8 @@ end
         progress = 0.5, crowding_now = 0.0, crowding_at_commit = 0.0,
         decision_confidence = 0.5, est_multiple = 0.575 * (1 + margin) + 1e-9)
     @test below && !above
- # Conviction modulates the deterioration bite: same signal, low-confidence
- # committer folds, high-conviction committer holds.
+    # Conviction modulates the deterioration bite: same signal, low-confidence
+    # committer folds, high-conviction committer holds.
     low_conf, _, _ = GlimpseABM.pivot_trigger(config;
         progress = 0.2, crowding_now = 0.7, crowding_at_commit = 0.0,
         decision_confidence = 0.1, est_multiple = 1.3)
@@ -628,7 +628,7 @@ end
         progress = 0.2, crowding_now = 0.7, crowding_at_commit = 0.0,
         decision_confidence = 0.95, est_multiple = 1.3)
     @test low_conf && !high_conf
- # Crowding improvement (now < commit) never counts as deterioration.
+    # Crowding improvement (now < commit) never counts as deterioration.
     improved, residual_i, _ = GlimpseABM.pivot_trigger(config;
         progress = 0.2, crowding_now = 0.1, crowding_at_commit = 0.9,
         decision_confidence = 0.5, est_multiple = 1.3)
@@ -642,8 +642,8 @@ end
         cfg = oa_test_config(pivot = true, PIVOT_DETERIORATION_GAIN = gain)
         GlimpseABM.pivot_trigger(cfg; kwargs...)
     end
- # Bit-identity at gain 1.0: the explicit formula with the original
- # hardcoded factors reproduces the trigger exactly (IEEE x·1.0 ≡ x).
+    # Bit-identity at gain 1.0: the explicit formula with the original
+    # hardcoded factors reproduces the trigger exactly (IEEE x·1.0 ≡ x).
     for (prog, cn, cc, conf, est) in (
             (0.5, 0.4, 0.1, 0.3, 1.2), (0.2, 0.7, 0.0, 0.1, 1.3),
             (0.9, 0.55, 0.31, 0.62, 0.97), (0.5, 0.0, 0.0, 0.5, 1.2))
@@ -657,8 +657,8 @@ end
         @test got[1] === (expected_residual <
                           recoverable * (1.0 + cfg.PIVOT_REDEPLOY_MARGIN))
     end
- # Monotone: with a deterioration the original gain leaves sub-trigger, a
- # higher gain converts holds into pivots (never the reverse).
+    # Monotone: with a deterioration the original gain leaves sub-trigger, a
+    # higher gain converts holds into pivots (never the reverse).
     kw = (progress = 0.3, crowding_now = 0.28, crowding_at_commit = 0.0,
           decision_confidence = 0.5, est_multiple = 1.1)
     p1, r1, _ = trigger_at(1.0; kw...)
@@ -666,7 +666,7 @@ end
     p3, r3, _ = trigger_at(3.0; kw...)
     @test r1 >= r2 >= r3                 # residual shrinks monotonically in gain
     @test !p1 && p3                      # observed-range deterioration only fires at higher gain
- # And zero deterioration never triggers regardless of gain.
+    # And zero deterioration never triggers regardless of gain.
     calm = (progress = 0.3, crowding_now = 0.0, crowding_at_commit = 0.0,
             decision_confidence = 0.5, est_multiple = 1.1)
     @test !trigger_at(5.0; calm...)[1]
@@ -686,13 +686,13 @@ end
         Dict{String,Any}[invest_win, invest_loss])
     with_pivots = GlimpseABM._recent_outcome_experience_stats(
         Dict{String,Any}[invest_win, invest_loss, pivots...])
- # Boolean channels unchanged by the pivot records...
+    # Boolean channels unchanged by the pivot records...
     @test with_pivots["recent_success_rate"] == base["recent_success_rate"] == 0.5
     @test with_pivots["ai_success_rate"] == base["ai_success_rate"] == 0.5
- #...but the cash multiples DO carry the loss into return evidence.
+    # ...but the cash multiples DO carry the loss into return evidence.
     @test with_pivots["n_roi_outcomes"] == 5
     @test with_pivots["return_evidence"] < base["return_evidence"]
- # Pivot-only history: Boolean channels stay at the neutral prior.
+    # Pivot-only history: Boolean channels stay at the neutral prior.
     only_pivots = GlimpseABM._recent_outcome_experience_stats(
         Dict{String,Any}[pivots...])
     @test only_pivots["recent_success_rate"] == 0.5
@@ -710,8 +710,8 @@ end
     function decide_with_holding(; with_holding::Bool)
         agent = EmergentAgent(1, config; primary_sector = "tech",
                               fixed_ai_level = "none", rng = MersenneTwister(99))
- # Force invest selection: overwhelming persistent invest taste (kept
- # below the exp(u/T) overflow point so the softmax stays finite).
+        # Force invest selection: overwhelming persistent invest taste (kept
+        # below the exp(u/T) overflow point so the softmax stays finite).
         agent.action_biases["invest"] = 100.0
         opp = oa_test_opportunity("opp_reentry"; competition = 0.0)
         if with_holding
@@ -728,21 +728,21 @@ end
                 "decision_confidence" => 0.0,
                 "perceived_crowding_at_commitment" => 0.0,
                 "sector" => opp.sector,
-           ))
+            ))
         end
         outcome = GlimpseABM.make_decision!(
             agent, [opp], mc, sim.market, 8)
         return agent, opp, outcome
     end
 
- # Control: without a holding the forced-invest agent invests in the opp.
+    # Control: without a holding the forced-invest agent invests in the opp.
     _, _, outcome_free = decide_with_holding(with_holding = false)
     @test outcome_free["action"] == "invest"
     @test outcome_free["opportunity_id"] == "opp_reentry"
 
- # With the write-off holding, the review pivots it FIRST; the only visible
- # opportunity is the just-pivoted one, so the forced invest falls through
- # to maintain instead of re-entering at full price (haircut churn).
+    # With the write-off holding, the review pivots it FIRST; the only visible
+    # opportunity is the just-pivoted one, so the forced invest falls through
+    # to maintain instead of re-entering at full price (haircut churn).
     agent, opp, outcome = decide_with_holding(with_holding = true)
     @test outcome["pivot_count"] == 1
     @test outcome["action"] == "maintain"
@@ -755,13 +755,13 @@ end
     mc = GlimpseABM.get_market_conditions(sim.market)
     amount = 10_000.0
 
- # Two byte-identical agents with the same write-off holding. For the TWIN
- # the review is run EXTERNALLY before make_decision! (its internal review
- # is then a no-op); for the PIVOT agent the internal review must do the
- # work. If — and only if — the internal review runs before every utility
- # computation, both agents enter the utility pass in exactly the same
- # state with exactly the same RNG stream (the review consumes none), so
- # utilities and the chosen action must match exactly.
+    # Two byte-identical agents with the same write-off holding. For the TWIN
+    # the review is run EXTERNALLY before make_decision! (its internal review
+    # is then a no-op); for the PIVOT agent the internal review must do the
+    # work. If — and only if — the internal review runs before every utility
+    # computation, both agents enter the utility pass in exactly the same
+    # state with exactly the same RNG stream (the review consumes none), so
+    # utilities and the chosen action must match exactly.
     function build_agent(tag::String)
         agent = EmergentAgent(1, config; primary_sector = "tech",
                               fixed_ai_level = "none", rng = MersenneTwister(4242))
@@ -779,7 +779,7 @@ end
             "decision_confidence" => 0.0,
             "perceived_crowding_at_commitment" => 0.0,
             "sector" => opp_held.sector,
-       ))
+        ))
         return agent
     end
 

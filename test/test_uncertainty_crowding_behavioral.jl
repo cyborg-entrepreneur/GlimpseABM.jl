@@ -20,8 +20,8 @@ function behavioral_uncertainty_state(
         config.KNIGHTIAN_PRODUCER_WEIGHTS = KnightianProducerWeights(
             competitive_recursion=CompetitiveRecursionProducerWeights(
                 volatility_weight=recursion_volatility_weight,
-           ),
-       )
+            ),
+        )
     end
     config.enable_round_logging = false
     GlimpseABM.initialize!(config)
@@ -29,14 +29,14 @@ function behavioral_uncertainty_state(
     market = MarketEnvironment(config; rng=MersenneTwister(seed))
     env = KnightianUncertaintyEnvironment(config; rng=MersenneTwister(seed + 1))
 
- # A builder closure receives the live market so synthetic actions can
- # reference REAL Opportunity objects. The opportunity_competition signal is
- # an investment-weighted aggregate over market.opportunities (competition
- # trace + total_invested/capacity saturation), and market.step! bumps
- # competition only via action["chosen_opportunity_obj"] — fabricated
- # string IDs never touch it. The pre-fix harness used fabricated IDs, so
- # the signal evaluated 0.0 on BOTH sides of every comparison and the
- # crowding assertions passed vacuously (review finding, 2026-06-09).
+    # A builder closure receives the live market so synthetic actions can
+    # reference REAL Opportunity objects. The opportunity_competition signal is
+    # an investment-weighted aggregate over market.opportunities (competition
+    # trace + total_invested/capacity saturation), and market.step! bumps
+    # competition only via action["chosen_opportunity_obj"] — fabricated
+    # string IDs never touch it. The pre-fix harness used fabricated IDs, so
+    # the signal evaluated 0.0 on BOTH sides of every comparison and the
+    # crowding assertions passed vacuously (review finding, 2026-06-09).
     actions = actions_or_builder isa Vector ? actions_or_builder :
               actions_or_builder(market)
 
@@ -73,8 +73,8 @@ function crowding_invest_actions_real(
             "chosen_opportunity_details" => Dict{String,Any}(
                 "id" => opp.id,
                 "sector" => hasfield(typeof(opp), :sector) ? opp.sector : "tech",
-           ),
-       ))
+            ),
+        ))
     end
     return actions
 end
@@ -87,7 +87,7 @@ function crowding_maintain_actions(tier::String, n::Int; start_id::Int = 1)
             "round" => 1,
             "ai_level_used" => tier,
             "ai_used" => tier != "none",
-       )
+        )
         for i in 1:n
     ]
 end
@@ -110,41 +110,41 @@ function crowding_invest_actions(
             "chosen_opportunity_details" => Dict{String,Any}(
                 "id" => opp_id,
                 "sector" => "tech",
-           ),
-       )
+            ),
+        )
         for (i, opp_id) in enumerate(opp_ids)
     ]
 end
 
 @testset "Uncertainty crowding and novelty use behavioral channels" begin
- # Amount sized against the N=24 market: ~5 opportunities at ~$2.0–2.8M
- # capacity. Spread (24 × $100k over 5 opps ≈ $480k each) stays well under
- # capacity; clustered (24 × $100k = $2.4M into one) saturates it. Both the
- # saturation leg and the competition-trace leg of the signal then separate
- # the two cases instead of clamping to 1.0 on both sides.
+    # Amount sized against the N=24 market: ~5 opportunities at ~$2.0–2.8M
+    # capacity. Spread (24 × $100k over 5 opps ≈ $480k each) stays well under
+    # capacity; clustered (24 × $100k = $2.4M into one) saturates it. Both the
+    # saturation leg and the competition-trace leg of the signal then separate
+    # the two cases instead of clamping to 1.0 on both sides.
     spread_state = behavioral_uncertainty_state(
         market -> crowding_invest_actions_real(market, "premium", 24;
                                                cluster=false, amount=100_000.0);
         n_agents=24,
-   )
+    )
     clustered_state = behavioral_uncertainty_state(
         market -> crowding_invest_actions_real(market, "premium", 24;
                                                cluster=true, amount=100_000.0);
         n_agents=24,
-   )
+    )
 
     @test clustered_state["practical_indeterminism"]["opportunity_overlap"] >
           spread_state["practical_indeterminism"]["opportunity_overlap"]
     @test clustered_state["practical_indeterminism"]["crowding_pressure"] >
           spread_state["practical_indeterminism"]["crowding_pressure"]
- # Crowding is opportunity-level: clustering capital into one opportunity
- # saturates it (24× the per-opportunity capital of the spread case), so
- # opportunity_competition must be STRICTLY higher — and alive on both
- # sides. The non-degeneracy floors are the real guard: a regression that
- # zeroes the signal (the pre-fix harness state) fails them immediately
- # instead of passing 0.0 >= 0.0. This channel carries the full
- # crowding_opportunity_competition_weight producer weight inherited from
- # the deleted sector-level terms.
+    # Crowding is opportunity-level: clustering capital into one opportunity
+    # saturates it (24× the per-opportunity capital of the spread case), so
+    # opportunity_competition must be STRICTLY higher — and alive on both
+    # sides. The non-degeneracy floors are the real guard: a regression that
+    # zeroes the signal (the pre-fix harness state) fails them immediately
+    # instead of passing 0.0 >= 0.0. This channel carries the full
+    # crowding_opportunity_competition_weight producer weight inherited from
+    # the deleted sector-level terms.
     clustered_oc = clustered_state["practical_indeterminism"]["opportunity_competition"]
     spread_oc = spread_state["practical_indeterminism"]["opportunity_competition"]
     @test 0.0 <= clustered_oc <= 1.0
@@ -156,7 +156,7 @@ end
     sparse_spread_state = behavioral_uncertainty_state(vcat(
         crowding_invest_actions("premium", ["opp_sparse_1", "opp_sparse_2"]; amount=1_000.0, start_id=1),
         crowding_maintain_actions("premium", 22; start_id=3),
-   ))
+    ))
 
     @test sparse_spread_state["practical_indeterminism"]["opportunity_overlap"] == 0.0
     @test sparse_spread_state["practical_indeterminism"]["investment_concentration"] > 0.0
@@ -172,12 +172,12 @@ end
         premium_state["agentic_novelty"]["level"],
         no_ai_state["agentic_novelty"]["level"];
         atol=1e-12,
-   )
+    )
 
     uplift_state = behavioral_uncertainty_state(
         crowding_maintain_actions("premium", 24);
         ai_novelty_uplift=0.20,
-   )
+    )
     @test uplift_state["agentic_novelty"]["ai_direct_novelty_uplift"] > 0.0
     @test uplift_state["agentic_novelty"]["level"] > premium_state["agentic_novelty"]["level"]
 
@@ -191,11 +191,11 @@ end
     no_ai_zero_vol_recursion = behavioral_uncertainty_state(
         crowding_maintain_actions("none", 24);
         recursion_volatility_weight=0.0,
-   )
+    )
     no_ai_strong_vol_recursion = behavioral_uncertainty_state(
         crowding_maintain_actions("none", 24);
         recursion_volatility_weight=1.0,
-   )
+    )
     @test isapprox(no_ai_zero_vol_recursion["competitive_recursion"]["ai_delta"], 0.0; atol=1e-12)
     @test isapprox(no_ai_strong_vol_recursion["competitive_recursion"]["ai_delta"], 0.0; atol=1e-12)
     @test no_ai_strong_vol_recursion["competitive_recursion"]["components"]["volatility"] >

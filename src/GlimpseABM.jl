@@ -52,13 +52,13 @@ include("information.jl")
 # Innovation system (before agents.jl - uses Any for agent type to avoid circular dep)
 include("innovation.jl")
 
-# AGI strategy ladder (the design notes). After
+# AGI strategy ladder (the strategy-ladder design notes). After
 # information.jl (reads Information / InformationSystem caches) and utils.jl
 # (sector_familiarity, behavior_ai_level); before agents.jl, whose decision
 # hooks call into it.
 include("strategy.jl")
 
-# Open-action extension (the design notes §Open-action
+# Open-action extension (the strategy-ladder design notes, Open-action
 # extension): A1 pivot trigger + A2 directed-creation density/weights. Same
 # placement rationale as strategy.jl (reads Information; called from
 # agents.jl/innovation.jl hooks). innovation.jl's directed branch references
@@ -157,12 +157,12 @@ export perceive_uncertainty, measure_uncertainty_state!, get_uncertainty_state
 export NumpyRNG, numpy_rand, numpy_randn, numpy_randint, numpy_seed!
 export numpy_gamma, numpy_beta, numpy_uniform, numpy_exponential
 
-# Exports — AGI strategy ladder (the design notes)
+# Exports — AGI strategy ladder (the strategy-ladder design notes)
 export STRATEGY_MODES, validate_strategy_config
 export strategy_active
 export consensus_congestion_forecast, private_edge, complement_shift
 
-# Exports — open-action extension (the design notes
+# Exports — open-action extension (the strategy-ladder design notes
 # §Open-action extension)
 export validate_open_action_config
 export pivot_haircut, pivot_trigger

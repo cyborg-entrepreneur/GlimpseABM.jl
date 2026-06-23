@@ -3,7 +3,7 @@ Open-action extension — A1 pivot (abandonment option) + A2 directed creation
 (Hayekian redirection).
 
 Implements the open-action extension specified in
-the design notes §"Open-action extension":
+the strategy-ladder design notes, "Open-action extension":
 
   A1 `ENABLE_PIVOT`             per-round portfolio review; an agent may
                                 liquidate an in-flight investment at an
@@ -47,7 +47,7 @@ below).
 # estimate). The default-neutrality test asserts it stays at 0 for an entire
 # flags-off simulation. Atomic because suite runs execute on multiple threads.
 #
-# Hot-path hygiene (design note): atomic increments on every
+# Hot-path hygiene (engine invariants F6, 2026-06-09): atomic increments on every
 # trigger evaluation are pure debug overhead in production runs, so they are
 # gated behind OPEN_ACTION_COUNT_ENABLED (default false). The neutrality tests
 # flip the flag on around their assertions; the structural ==0 guarantee is
@@ -56,7 +56,7 @@ const OPEN_ACTION_EVAL_COUNT = Threads.Atomic{Int}(0)
 const OPEN_ACTION_COUNT_ENABLED = Ref{Bool}(false)
 
 # Debug-only deterioration samples collected by pivot_trigger when the debug
-# flag is on (consumed by a liveness probe to print the
+# flag is on (consumed by scripts/probe_pivot_liveness.jl to print the
 # observed deterioration distribution). Lock-guarded for the threaded suite;
 # zero cost in production (single Bool check, flag default false).
 const PIVOT_DETERIORATION_SAMPLES = Float64[]
@@ -85,7 +85,7 @@ _record_pivot_deterioration_sample!(d::Float64) =
 
 # The redeployment margin, conviction base, and deterioration gain were
 # promoted to documented config fields (PIVOT_REDEPLOY_MARGIN,
-# PIVOT_CONVICTION_BASE, PIVOT_DETERIORATION_GAIN — (design note)
+# PIVOT_CONVICTION_BASE, PIVOT_DETERIORATION_GAIN — engine invariants F3a,
 # 2026-06-09; defaults bit-identical to the original hardcoded trigger). See
 # config.jl for the field documentation, including the censoring analysis
 # motivating the gain dial.
@@ -129,7 +129,7 @@ observables (see file docstring):
       deterioration range (≈0–0.28 at BASELINE) sits mostly below the
       trigger region (d_eff ≈0.45–0.79 for early/mid-life pivots); gain
       ≈2.5–3 maps the observed range onto the trigger region at mid-progress
-      (see the config-field docs).
+      (see the config-field docs and scripts/probe_pivot_liveness.jl).
   expected_residual = max(est_multiple, 0) × (1 − d_eff)
       decision-relevant expected payoff per committed dollar at maturity:
       the agent's stored commitment-time INSTRUMENT estimate (the raw
@@ -168,7 +168,7 @@ end
 # Observable-extractor surface (mirrors strategy.jl's extractors): only the
 # VISIBLE estimated_return field of an Information object — never
 # hidden_factors, contains_hallucination, or actual_accuracy. Since
-# design note the pivot trigger reads the decision-time-
+# engine invariants F3c (2026-06-09) the pivot trigger reads the decision-time-
 # STORED instrument estimate rather than a same-round cache re-query, so this
 # extractor is no longer on the trigger path; it is retained as the
 # documented observable surface for any future open-action reader of a live

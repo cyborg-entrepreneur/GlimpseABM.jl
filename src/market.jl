@@ -1340,7 +1340,7 @@ function get_perceived_opportunities(
     # discovery process rather than a deterministic global top-k oracle.
     raw_budget = (3.0 + info_breadth * 60.0) * (1.0 + info_quality)
 
-    # WEALTH_SCALED_COMPUTE robustness cell (reviewer addendum, 2026-06-11):
+    # WEALTH_SCALED_COMPUTE robustness cell (robustness addendum, 2026-06-11):
     # founders purchase analysis breadth in proportion to their resources —
     # the rich-get-richer marginal-compute dynamic. The multiplier
     # clamp(capital/initial_equity, 0.25, 4.0)^scaling applies UNIFORMLY
@@ -1604,13 +1604,6 @@ function spawn_opportunity_from_innovation!(
     )
     derived_truly_unknown = derived_discovery_threshold > 0.68 && impact_trace < 0.35
 
-    # Capacity based on config
-    base_capacity = hasfield(typeof(market.config), :OPPORTUNITY_BASE_CAPACITY) ?
-        market.config.OPPORTUNITY_BASE_CAPACITY : 500000.0
-    capacity_variance = hasfield(typeof(market.config), :OPPORTUNITY_CAPACITY_VARIANCE) ?
-        market.config.OPPORTUNITY_CAPACITY_VARIANCE : 0.3
-    opp_capacity = base_capacity * (1.0 + (rand(market.rng) - 0.5) * 2 * capacity_variance)
-
     opportunity = Opportunity(
         id=opp_id,
         latent_return_potential=clamp(latent_return, 0.5, market.config.RETURN_CLAMP_MAX),
@@ -1633,7 +1626,13 @@ function spawn_opportunity_from_innovation!(
         combination_signature=innovation.combination_signature,
         origin_innovation_id=innovation.id,
         component_scarcity=scarcity,
-        capacity=opp_capacity,
+        # S2 per-opportunity edge (gated): a created niche requires exactly the
+        # knowledge components the innovation recombined. RNG-neutral (no draw),
+        # and empty when ENABLE_OPPORTUNITY_COMPONENTS is off (byte-identical).
+        knowledge_components=market.config.ENABLE_OPPORTUNITY_COMPONENTS ?
+            copy(innovation.knowledge_components) : String[],
+        # Leave capacity at the constructor sentinel so spawned opportunities use
+        # the same canonical niche-size distribution as other opportunities.
         rng=market.rng,
     )
 

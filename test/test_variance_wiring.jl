@@ -17,8 +17,8 @@ include(joinpath(@__DIR__, "..", "scripts", "run_mixed_tier_analysis_full.jl"))
                 "basic" => Dict("survival_rate" => 0.52),
                 "advanced" => Dict("survival_rate" => 0.48),
                 "premium" => Dict("survival_rate" => 0.42),
-           ),
-       ),
+            ),
+        ),
         Dict{String,Any}(
             "status" => "completed",
             "run_idx" => 2,
@@ -27,8 +27,8 @@ include(joinpath(@__DIR__, "..", "scripts", "run_mixed_tier_analysis_full.jl"))
                 "basic" => Dict("survival_rate" => 0.61),
                 "advanced" => Dict("survival_rate" => 0.56),
                 "premium" => Dict("survival_rate" => 0.50),
-           ),
-       ),
+            ),
+        ),
     ]
 
     paired = paired_treatment_effects(all_results)
@@ -45,7 +45,7 @@ end
         RANDOM_SEED=931,
         ACTION_BIAS_SIGMA=0.0,
         ACTION_SELECTION_NOISE=0.0,
-   )
+    )
     GlimpseABM.initialize!(cfg)
     market = MarketEnvironment(cfg; rng=MersenneTwister(931))
     mc = GlimpseABM.get_market_conditions(market)
@@ -62,10 +62,10 @@ end
 
     neutral_outcome = GlimpseABM.make_decision!(
         neutral, opps, mc, market, 1; info_system=nothing
-   )
+    )
     biased_outcome = GlimpseABM.make_decision!(
         biased, opps, mc, market, 1; info_system=nothing
-   )
+    )
 
     @test haskey(biased_outcome, "action_probabilities")
     @test biased_outcome["action_probabilities"]["invest"] >
@@ -102,7 +102,7 @@ end
             sector=i <= 40 ? "tech" : "retail",
             config=cfg,
             capacity=1_000_000.0,
-       )
+        )
         push!(market.opportunities, opp)
         market.opportunity_map[opp.id] = opp
     end
@@ -139,7 +139,7 @@ end
         sector="tech",
         config=base_cfg,
         capacity=10_000_000.0,
-   )
+    )
     noisy_opp = Opportunity(
         id="return-noise-probe-noisy",
         latent_return_potential=2.0,
@@ -147,7 +147,7 @@ end
         sector="tech",
         config=noisy_cfg,
         capacity=10_000_000.0,
-   )
+    )
 
     base_draws = [GlimpseABM.realized_return(base_opp, mc, "none"; rng=MersenneTwister(10_000 + i)) for i in 1:250]
     noisy_draws = [GlimpseABM.realized_return(noisy_opp, mc, "none"; rng=MersenneTwister(10_000 + i)) for i in 1:250]
@@ -162,7 +162,7 @@ end
         RANDOM_SEED=938,
         ACTION_BIAS_SIGMA=0.0,
         ACTION_SELECTION_NOISE=0.0,
-   )
+    )
     GlimpseABM.initialize!(cfg)
     market = MarketEnvironment(cfg; rng=MersenneTwister(938))
     mc = GlimpseABM.get_market_conditions(market)
@@ -179,13 +179,13 @@ end
                 "investment_amount" => 1.0,
                 "capital_returned" => multiple,
                 "ai_used" => false,
-           )
+            )
         ]
         return GlimpseABM.make_decision!(
             agent, Opportunity[], mc, market, 1;
             uncertainty_env=env,
             info_system=nothing
-       )
+        )
     end
 
     five_x = outcome_after_recent_multiple(5.0)

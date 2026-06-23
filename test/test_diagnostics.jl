@@ -40,9 +40,9 @@ end
 
 @testset "Diagnostics" begin
 
- # ------------------------------------------------------------------
- # 1. Per-use cost accumulates for Basic tier
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 1. Per-use cost accumulates for Basic tier
+    # ------------------------------------------------------------------
     @testset "basic per-use cost is actually deducted" begin
         cfg, market, info_system, agent, opps = _diag_setup("basic")
         capital_before = get_capital(agent)
@@ -54,17 +54,17 @@ end
         evals = GlimpseABM.evaluate_portfolio_opportunities(
             agent, opps, market_conditions, perception;
             ai_level="basic", info_system=info_system,
-       )
+        )
         capital_after = get_capital(agent)
         deducted = capital_before - capital_after
- # Should be ~length(opps) × per_use (one charge per fresh get_information)
+        # Should be ~length(opps) × per_use (one charge per fresh get_information)
         expected = length(opps) * per_use
         @test isapprox(deducted, expected, rtol=0.01)
     end
 
- # ------------------------------------------------------------------
- # 2. Per-use cost dedupe across utility + ranking calls
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 2. Per-use cost dedupe across utility + ranking calls
+    # ------------------------------------------------------------------
     @testset "per-use cost dedupe on cache hit" begin
         cfg, market, info_system, agent, opps = _diag_setup("basic")
         per_use = Float64(cfg.AI_LEVELS["basic"].per_use_cost) * cfg.AI_COST_INTENSITY
@@ -72,20 +72,20 @@ end
         market_conditions = test_market_conditions()
         perception = empty_perception()
 
- # First call: ALL fresh — full charge
+        # First call: ALL fresh — full charge
         c0 = get_capital(agent)
         GlimpseABM.evaluate_portfolio_opportunities(
             agent, opps, market_conditions, perception;
             ai_level="basic", info_system=info_system,
-       )
+        )
         c1 = get_capital(agent)
         first_deduct = c0 - c1
 
- # Second call SAME ROUND, same opps: all cache hits → zero charge
+        # Second call SAME ROUND, same opps: all cache hits → zero charge
         GlimpseABM.evaluate_portfolio_opportunities(
             agent, opps, market_conditions, perception;
             ai_level="basic", info_system=info_system,
-       )
+        )
         c2 = get_capital(agent)
         second_deduct = c1 - c2
 
@@ -135,22 +135,22 @@ end
             opportunity=simple,
             action="market_analysis",
             n_candidates=Float64(length(opps)),
-       )
+        )
         advanced_cost = GlimpseABM.ai_analysis_call_cost(agent, "advanced";
             opportunity=simple,
             action="market_analysis",
             n_candidates=Float64(length(opps)),
-       )
+        )
         premium_simple_cost = GlimpseABM.ai_analysis_call_cost(agent, "premium";
             opportunity=simple,
             action="market_analysis",
             n_candidates=Float64(length(opps)),
-       )
+        )
         premium_complex_cost = GlimpseABM.ai_analysis_call_cost(agent, "premium";
             opportunity=complex,
             action="market_analysis",
             n_candidates=Float64(length(opps)),
-       )
+        )
 
         @test 0.0 < basic_cost < advanced_cost < premium_simple_cost
         @test premium_complex_cost > premium_simple_cost
@@ -174,13 +174,13 @@ end
             opportunity=opp,
             action="market_analysis",
             n_candidates=Float64(length(opps)),
-       )
+        )
         cfg.AI_DIFFICULTY_COST_SCALING = 1.0
         scaled_cost = GlimpseABM.ai_analysis_call_cost(agent, "premium";
             opportunity=opp,
             action="market_analysis",
             n_candidates=Float64(length(opps)),
-       )
+        )
 
         @test scaled_cost > base_cost
     end
@@ -188,7 +188,7 @@ end
     @testset "frontier AI aliases map to canonical internal tier" begin
         @test GlimpseABM.normalize_ai_label("frontier_ai") == "premium"
         @test GlimpseABM.normalize_ai_label("frontier") == "premium"
- # Backward compatibility for older scripts/configs.
+        # Backward compatibility for older scripts/configs.
         @test GlimpseABM.normalize_ai_label("premium_ai") == "premium"
     end
 
@@ -226,7 +226,7 @@ end
             1;
             info_system=info_system,
             ai_level_override="basic",
-       )
+        )
 
         @test outcome["ai_decision_analysis_cost"] > 0.0
         @test outcome["ai_total_analysis_cost"] >= outcome["ai_decision_analysis_cost"]
@@ -244,7 +244,7 @@ end
             "ai_action_analysis_cost" => 7.0,
             "ai_total_analysis_cost" => 12.0,
             "explore_cost" => 100.0,
-       )
+        )
 
         stats = GlimpseABM.compile_round_stats(
             sim,
@@ -252,7 +252,7 @@ end
             Dict{String,Any}[action],
             Dict{String,Any}[],
             Dict{String,Dict{String,Any}}(),
-       )
+        )
 
         @test stats["total_ai_analysis_cost"] == 12.0
         @test stats["total_ai_decision_analysis_cost"] == 5.0
@@ -306,7 +306,7 @@ end
                 base.info_quality,
                 info_breadth,
                 base.per_use_cost,
-           )
+            )
             market = MarketEnvironment(cfg; rng=MersenneTwister(606))
             agent = EmergentAgent(1, cfg;
                 primary_sector="tech",
@@ -326,12 +326,12 @@ end
         @test low["discovered_niche"] == high["discovered_niche"]
     end
 
- # ------------------------------------------------------------------
- # 3. Per-agent cache key produces within-tier heterogeneity
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 3. Per-agent cache key produces within-tier heterogeneity
+    # ------------------------------------------------------------------
     @testset "two premium agents get different estimates per opp" begin
         cfg, market, info_system, agent_a, opps = _diag_setup("premium"; seed=1001)
- # Same setup but different agent id and rng state
+        # Same setup but different agent id and rng state
         agent_b = EmergentAgent(2, cfg;
             primary_sector="tech",
             fixed_ai_level="premium",
@@ -347,18 +347,18 @@ end
                 differing += 1
             end
         end
- # If cache were keyed only by (opp, tier), every estimate would match
- # and `differing` would be 0. With per-agent keying, almost all should differ.
+        # If cache were keyed only by (opp, tier), every estimate would match
+        # and `differing` would be 0. With per-agent keying, almost all should differ.
         @test differing >= length(opps) - 2
     end
 
- # ------------------------------------------------------------------
- # 4. Frontier AI subscription billing matches monthly cost per round
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 4. Frontier AI subscription billing matches monthly cost per round
+    # ------------------------------------------------------------------
     @testset "frontier AI subscription bills full monthly cost per round" begin
- # Pins the subscription backend explicitly: this test is ABOUT seat-fee
- # billing, which only exists under hybrid/fixed (token-core migration
- # 2026-06-11 made "token" the struct default, with no subscriptions).
+        # Pins the subscription backend explicitly: this test is ABOUT seat-fee
+        # billing, which only exists under hybrid/fixed (token-core migration
+        # 2026-06-11 made "token" the struct default, with no subscriptions).
         cfg = EmergentConfig(N_AGENTS=1, N_ROUNDS=1, RANDOM_SEED=42,
                              AGENT_AI_MODE="fixed", AI_COST_MODEL="hybrid")
         agent = EmergentAgent(1, cfg;
@@ -369,15 +369,15 @@ end
         c0 = get_capital(agent)
         charged = GlimpseABM.charge_subscription_installment!(agent, "premium")
         c1 = get_capital(agent)
- # Documented: $3500/month × AI_COST_INTENSITY
+        # Documented: $3500/month × AI_COST_INTENSITY
         expected = 3500.0 * cfg.AI_COST_INTENSITY
         @test isapprox(charged, expected, rtol=0.01)
         @test isapprox(c0 - c1, expected, rtol=0.01)
     end
 
- # ------------------------------------------------------------------
- # 5. Investment-amount aggregation matches sum of per-action amounts
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 5. Investment-amount aggregation matches sum of per-action amounts
+    # ------------------------------------------------------------------
     @testset "opp.total_invested matches summed action amounts" begin
         cfg = EmergentConfig(N_AGENTS=20, N_ROUNDS=2, RANDOM_SEED=42,
                              AGENT_AI_MODE="fixed")
@@ -385,10 +385,10 @@ end
             initial_tier_distribution=Dict("none"=>1.0))
         GlimpseABM.run!(sim)
 
- # Each opp.total_invested is decremented as investments mature, so
- # this only matches in the absence of maturity events. We assert a
- # weaker invariant: total_invested across opps is non-negative and
- # bounded by total agent capital deployed.
+        # Each opp.total_invested is decremented as investments mature, so
+        # this only matches in the absence of maturity events. We assert a
+        # weaker invariant: total_invested across opps is non-negative and
+        # bounded by total agent capital deployed.
         agg_opp = sum(o.total_invested for o in sim.market.opportunities; init=0.0)
         agg_agent = sum(a.total_invested for a in sim.agents; init=0.0)
         @test agg_opp >= 0
@@ -396,43 +396,43 @@ end
         @test agg_opp <= agg_agent + 1.0  # Opp total ≤ what agents reported deploying
     end
 
- # ------------------------------------------------------------------
- # 6. Competition accumulates when many agents invest in the same opp
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 6. Competition accumulates when many agents invest in the same opp
+    # ------------------------------------------------------------------
     @testset "competition rises with concentrated investment" begin
         cfg = EmergentConfig(N_AGENTS=2, N_ROUNDS=1, RANDOM_SEED=42)
         market = MarketEnvironment(cfg; rng=MersenneTwister(42))
         opp = first(market.opportunities)
- # Hammer one opp with 100 invest updates
+        # Hammer one opp with 100 invest updates
         for _ in 1:100
             GlimpseABM.update_opportunity_competition!(market, opp, 0.05)
         end
- # With per-investment decay removed, competition should be far above
- # the ~0.7 cap that v2.2 hit. Pre-fix value was capped at 0.7;
- # post-fix should be ≥ 1.0.
+        # With per-investment decay removed, competition should be far above
+        # the ~0.7 cap that v2.2 hit. Pre-fix value was capped at 0.7;
+        # post-fix should be ≥ 1.0.
         @test opp.competition >= 1.0
     end
 
- # ------------------------------------------------------------------
- # 7. Population-scaling idempotency — no double-multiplication
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 7. Population-scaling idempotency — no double-multiplication
+    # ------------------------------------------------------------------
     @testset "initialize! is idempotent for population scaling" begin
         cfg = EmergentConfig(N_AGENTS=4000, RANDOM_SEED=42)
         GlimpseABM.initialize!(cfg)
         cap_after_first = cfg.OPPORTUNITY_BASE_CAPACITY
         thresh_after_first = cfg.DISRUPTION_COMPETITION_THRESHOLD
- # Second call should be a no-op
+        # Second call should be a no-op
         GlimpseABM.initialize!(cfg)
         @test cfg.OPPORTUNITY_BASE_CAPACITY == cap_after_first
         @test cfg.DISRUPTION_COMPETITION_THRESHOLD == thresh_after_first
- # And third
+        # And third
         GlimpseABM.initialize!(cfg)
         @test cfg.OPPORTUNITY_BASE_CAPACITY == cap_after_first
     end
 
- # ------------------------------------------------------------------
- # 8. RNG reproducibility — two markets with same seed produce same opp.capacity
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 8. RNG reproducibility — two markets with same seed produce same opp.capacity
+    # ------------------------------------------------------------------
     @testset "opportunity capacity is reproducible across seeded markets" begin
         cfg = EmergentConfig(N_AGENTS=10, RANDOM_SEED=42)
         m1 = MarketEnvironment(cfg; rng=MersenneTwister(42))
@@ -443,9 +443,9 @@ end
         @test caps1 == caps2
     end
 
- # ------------------------------------------------------------------
- # 9. Fixed mode → get_ai_level always returns the fixed tier
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 9. Fixed mode → get_ai_level always returns the fixed tier
+    # ------------------------------------------------------------------
     @testset "fixed mode locks tier" begin
         cfg = EmergentConfig(N_AGENTS=5, N_ROUNDS=2, RANDOM_SEED=42,
                              AGENT_AI_MODE="fixed")
@@ -460,27 +460,27 @@ end
         end
     end
 
- # ------------------------------------------------------------------
- # 10. Emergent mode → fixed_ai_level is nothing, current can change
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 10. Emergent mode → fixed_ai_level is nothing, current can change
+    # ------------------------------------------------------------------
     @testset "emergent mode allows tier switching" begin
         cfg = EmergentConfig(N_AGENTS=5, N_ROUNDS=1, RANDOM_SEED=42,
                              AGENT_AI_MODE="emergent")
         sim = EmergentSimulation(config=cfg, seed=42,
             initial_tier_distribution=Dict("premium"=>1.0))
- # Emergent agents must have nothing in fixed_ai_level so choose_ai_level fires
+        # Emergent agents must have nothing in fixed_ai_level so choose_ai_level fires
         for agent in sim.agents
             @test isnothing(agent.fixed_ai_level) || agent.fixed_ai_level == "none"
         end
     end
 
- # (Former testset 11 covered update_lifecycle! stage transitions; the
- # staged opportunity lifecycle was excised 2026-06-09 as unreachable —
- # review decision #4.)
+    # (Former testset 11 covered update_lifecycle! stage transitions; the
+    # staged opportunity lifecycle was excised 2026-06-09 as unreachable —
+    # review decision #4.)
 
- # ------------------------------------------------------------------
- # 12. Niche / spawn opportunity is visible to its creator (via override)
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 12. Niche / spawn opportunity is visible to its creator (via override)
+    # ------------------------------------------------------------------
     @testset "niche opportunity is visible to creator via created_by override" begin
         cfg = EmergentConfig(N_AGENTS=2, RANDOM_SEED=42)
         market = MarketEnvironment(cfg; rng=MersenneTwister(42))
@@ -493,8 +493,8 @@ end
             sector_uncertainty_context=0.70,
             search_effort=1.2,
             niche_creation_evidence=0.30,
-       )
- # v2.7: discovered starts false; creator sees via created_by override.
+        )
+        # v2.7: discovered starts false; creator sees via created_by override.
         @test niche_opp.discovered == false
         @test niche_opp.created_by == 1
         @test niche_opp.novelty_score > 0.50
@@ -502,8 +502,8 @@ end
         @test niche_opp.required_discovery_threshold > 0.0
         @test !isnothing(niche_opp.combination_signature)
         @test niche_opp.component_scarcity > 0.50
- # Creator-visibility check: agent with id=1 should see this opp in
- # get_opportunities_for_agent even though discovered=false.
+        # Creator-visibility check: agent with id=1 should see this opp in
+        # get_opportunities_for_agent even though discovered=false.
         traits = Dict("exploration_tendency"=>0.5, "market_awareness"=>0.5,
                       "ai_trust"=>0.5, "uncertainty_tolerance"=>0.5)
         creator = EmergentAgent(1, cfg; primary_sector="tech", fixed_ai_level="none",
@@ -521,13 +521,13 @@ end
             combination_uncertainty = 0.10,
             required_discovery_threshold = 0.00,
             truly_unknown = false,
-       )
+        )
         opaque = (
             novelty_score = 0.90,
             combination_uncertainty = 0.90,
             required_discovery_threshold = 0.80,
             truly_unknown = true,
-       )
+        )
 
         base_legible = GlimpseABM.sector_familiarity(
             Dict("tech" => 1.0),
@@ -535,21 +535,21 @@ end
             opportunity=legible,
             config=cfg,
             default=0.0,
-       )
+        )
         base_opaque = GlimpseABM.sector_familiarity(
             Dict("tech" => 1.0),
             "tech_specialized";
             opportunity=opaque,
             config=cfg,
             default=0.0,
-       )
+        )
         exact = GlimpseABM.sector_familiarity(
             Dict("tech_specialized" => 1.0),
             "tech_specialized";
             opportunity=opaque,
             config=cfg,
             default=0.0,
-       )
+        )
 
         @test 0.0 < base_opaque < base_legible < 1.0
         @test exact == 1.0
@@ -564,7 +564,7 @@ end
             sector_uncertainty_context=0.70,
             search_effort=1.2,
             niche_creation_evidence=0.30,
-       )
+        )
         agent = EmergentAgent(1, cfg;
             primary_sector="tech",
             fixed_ai_level="premium",
@@ -598,7 +598,7 @@ end
             scarcity=0.90,
             is_new_combination=true,
             ai_level_used="premium",
-       )
+        )
 
         spawned = GlimpseABM.spawn_opportunity_from_innovation!(market, innovation, 3.0)
 
@@ -624,7 +624,7 @@ end
             "sector_uncertainty_context" => 0.85,
             "ai_search_effort" => 1.4,
             "niche_creation_evidence" => 0.32,
-       )
+        )
 
         ids = GlimpseABM._create_niche_opportunities_from_action!(sim, action, 7)
         created = [sim.market.opportunity_map[id] for id in ids]
@@ -668,7 +668,7 @@ end
             knowledge_gap=0.20,
             exploration_tendency=0.95,
             market_awareness=0.90,
-       )
+        )
 
         @test startswith(taxonomy.niche_sector, "tech_")
         @test haskey(taxonomy.scores, taxonomy.modifier)
@@ -686,7 +686,7 @@ end
             "sector_uncertainty_context" => 0.65,
             "ai_search_effort" => 1.1,
             "niche_creation_evidence" => 0.28,
-       )
+        )
 
         ids = GlimpseABM._create_niche_opportunities_from_action!(sim, action, 8)
         created = [sim.market.opportunity_map[id] for id in ids]
@@ -696,13 +696,13 @@ end
         @test all(opp -> opp.combination_signature == "niche:tech:digital", created)
     end
 
- # ------------------------------------------------------------------
- # 13. Fixed-mode runs are tier-homogeneous (ATE design invariant)
- # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 13. Fixed-mode runs are tier-homogeneous (ATE design invariant)
+    # ------------------------------------------------------------------
     @testset "fixed-mode tier population is homogeneous" begin
- # Critical for ATE estimation: when a fixed-mode experiment runs the
- # "premium" cell, every agent must be premium. There must be no
- # mixed-tier competition contaminating the treatment assignment.
+        # Critical for ATE estimation: when a fixed-mode experiment runs the
+        # "premium" cell, every agent must be premium. There must be no
+        # mixed-tier competition contaminating the treatment assignment.
         for tier in ["none", "basic", "advanced", "premium"]
             cfg = EmergentConfig(N_AGENTS=20, N_ROUNDS=1, RANDOM_SEED=42,
                                  AGENT_AI_MODE="fixed")
@@ -710,7 +710,7 @@ end
                 initial_tier_distribution=Dict(tier => 1.0))
             tiers = unique(get_ai_level(a) for a in sim.agents)
             @test tiers == [tier]
- # And no agent should drift to another tier across rounds
+            # And no agent should drift to another tier across rounds
             GlimpseABM.run!(sim)
             tiers_after = unique(get_ai_level(a) for a in sim.agents)
             @test tiers_after == [tier]

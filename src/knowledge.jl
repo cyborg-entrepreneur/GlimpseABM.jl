@@ -522,8 +522,12 @@ function learn_from_success!(
         push!(kb.agent_knowledge[agent_id], kid)
     end
 
-    # Create derived knowledge for high-quality innovations
-    if innovation.success && innovation.quality > 0.7
+    # Create derived knowledge for high-quality innovations. The gate is
+    # config-driven (DERIVED_KNOWLEDGE_QUALITY_GATE, default 0.7 = byte-identical)
+    # so the recombinant cycle can be un-deadlocked (base-only quality maxes near
+    # 0.61 < 0.7; see the config note).
+    derived_gate = isnothing(kb.config) ? 0.7 : kb.config.DERIVED_KNOWLEDGE_QUALITY_GATE
+    if innovation.success && innovation.quality > derived_gate
         new_knowledge = create_derived_knowledge(kb, innovation)
         if !isnothing(new_knowledge)
             add_knowledge!(kb, new_knowledge; ai_discovered=innovation.ai_assisted)

@@ -15,7 +15,7 @@ function decision_bonus_fixture()
         primary_sector="tech",
         fixed_ai_level="none",
         rng=MersenneTwister(11),
-   )
+    )
     for key in keys(agent.traits)
         agent.traits[key] = 0.5
     end
@@ -36,7 +36,7 @@ end
             complexity=0.4,
             sector="tech",
             config=config,
-       ),
+        ),
     ]
 
     none_invest = GlimpseABM.calculate_investment_utility(
@@ -46,7 +46,7 @@ end
         perception;
         ai_level="none",
         info_system=nothing,
-   )
+    )
     premium_invest = GlimpseABM.calculate_investment_utility(
         agent,
         opportunities,
@@ -54,7 +54,7 @@ end
         perception;
         ai_level="premium",
         info_system=nothing,
-   )
+    )
     @test isapprox(premium_invest, none_invest; atol=1e-12)
 
     none_innovate = GlimpseABM.calculate_innovation_utility(
@@ -62,13 +62,13 @@ end
         market_conditions,
         perception;
         ai_level="none",
-   )
+    )
     premium_innovate = GlimpseABM.calculate_innovation_utility(
         agent,
         market_conditions,
         perception;
         ai_level="premium",
-   )
+    )
     @test isapprox(premium_innovate, none_innovate; atol=1e-12)
 end
 
@@ -82,7 +82,7 @@ end
         complexity=0.4,
         sector="tech",
         config=config,
-   )
+    )
 
     none_score = GlimpseABM.evaluate_opportunity_basic(
         agent,
@@ -92,7 +92,7 @@ end
         estimated_uncertainty=0.25,
         confidence=0.8,
         ai_level="none",
-   )
+    )
     premium_score = GlimpseABM.evaluate_opportunity_basic(
         agent,
         opportunity,
@@ -101,7 +101,7 @@ end
         estimated_uncertainty=0.25,
         confidence=0.8,
         ai_level="premium",
-   )
+    )
 
     @test isapprox(premium_score, none_score; atol=1e-12)
 end
@@ -120,7 +120,7 @@ end
             primary_sector="tech",
             fixed_ai_level=tier,
             rng=MersenneTwister(48),
-       )
+        )
         agent.competence = 1.0
         agent.innovativeness = 1.0
         return GlimpseABM.execute_action!(
@@ -129,7 +129,7 @@ end
             market,
             1;
             innovation_engine=nothing,
-       )
+        )
     end
 
     none_outcome = fallback_outcome("none")

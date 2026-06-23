@@ -24,7 +24,7 @@ mutable struct InformationSystem
     cache_hits::Int
     cache_misses::Int
     domain_performance::Dict{String,Vector{Float64}}
-    # ── Emergence audit extension (P9, AI_ERROR_CORRELATION) ────────────────
+    # ── Emergence audit extension (AI_ERROR_CORRELATION) ────────────────
     # Per-(opportunity, round, tier) common error draws. Keyed (opp_id,
     # ai_level); the round dimension is implicit because the cache is cleared
     # with the information cache at the start of every round (clear_cache!,
@@ -53,7 +53,7 @@ const COMMON_ERROR_STREAM_SALT = UInt64(0x9E3779B97F4A7C15)
 Create a new InformationSystem.
 
 `common_error_seed` seeds the dedicated common-error stream (emergence audit
-P9 dial); production passes the simulation's `actual_seed` so rho > 0 runs
+correlation dial); production passes the simulation's `actual_seed` so rho > 0 runs
 are reproducible per (seed, run). The default 0 only matters for diagnostic
 paths that never enable the dial.
 """
@@ -324,7 +324,7 @@ function get_information(
 
     # AI_BIAS_INTENSITY scales the systematic-bias channel the way
     # HALLUCINATION_INTENSITY scales hallucinations in Step 4 above: 0.0 =
-    # bias-free (the NO_AI_BIAS robustness cell), 1.0 = baseline.
+    # bias-free (the NO_AI_BIAS robustness-addendum cell), 1.0 = baseline.
     # Multiplication by exactly 1.0 is an identity in IEEE arithmetic, so the
     # default path stays bit-identical.
     bias = Float64(domain_cap.bias) *
@@ -333,7 +333,7 @@ function get_information(
 
     # Estimate return with noise (quality-scaled).
     #
-    # Emergence audit P9 (AI_ERROR_CORRELATION = rho): the CONTINUOUS estimate
+    # Emergence audit (AI_ERROR_CORRELATION = rho): the CONTINUOUS estimate
     # error is eps = sqrt(rho)*eps_common(opp, round, tier) + sqrt(1-rho)*eps_idio
     # with eps_common, eps_idio independent standard normals, so
     # Var(eps) = rho + (1 - rho) = 1 at every rho — total error variance (and
@@ -496,7 +496,7 @@ end
 
 """
 Clear the per-round information caches: the per-agent information cache AND
-the per-(opportunity, tier) common-error cache (emergence audit P9 — the
+the per-(opportunity, tier) common-error cache (emergence audit — the
 common cache MUST clear with the info cache so eps_common is per-(opp,
 round, tier), not per-(opp, tier) forever). Called at the start of every
 simulation round (step!, simulation.jl).

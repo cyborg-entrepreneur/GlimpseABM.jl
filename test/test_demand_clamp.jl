@@ -21,21 +21,21 @@ using GlimpseABM
     GlimpseABM.initialize!(cfg)
     market = MarketEnvironment(cfg; rng=MersenneTwister(42))
 
- # Force an extreme crowding + extreme clearing ratio state. This exactly
- # reproduces an audit probe conditions.
+    # Force an extreme crowding + extreme clearing ratio state. This exactly
+    # reproduces the audit probe conditions.
     market.crowding_metrics["share_invest"] = 0.95   # far above threshold
     market.sector_clearing_index["tech"] = 10.0      # extreme hot market
 
- # First clear the cache so get_demand_adjustments recomputes
+    # First clear the cache so get_demand_adjustments recomputes
     empty!(market.sector_demand_adjustments)
 
     adj = GlimpseABM.get_demand_adjustments(market, "tech")
     ret = adj["return"]
     fail = adj["failure"]
 
- # Both must be finite, positive, and within sane economic bounds. Pre-v3.3.1
- # the unclamped compound formulas produced return=15.67 and failure=-9.36
- # in this exact scenario.
+    # Both must be finite, positive, and within sane economic bounds. Pre-v3.3.1
+    # the unclamped compound formulas produced return=15.67 and failure=-9.36
+    # in this exact scenario.
     @test isfinite(ret)
     @test isfinite(fail)
     @test ret > 0.0     # returns can't be negative
@@ -43,7 +43,7 @@ using GlimpseABM
     @test ret <= 3.0    # clamp ceiling
     @test fail <= 3.0   # clamp ceiling
 
- # Cold-market counterpart: low crowding, low clearing ratio.
+    # Cold-market counterpart: low crowding, low clearing ratio.
     empty!(market.sector_demand_adjustments)
     market.crowding_metrics["share_invest"] = 0.10
     market.sector_clearing_index["tech"] = 0.10

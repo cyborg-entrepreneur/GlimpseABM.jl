@@ -6,13 +6,13 @@ tier (none/basic/advanced/premium), locked for the whole run
 (AGENT_AI_MODE="fixed" + agent.fixed_ai_level). Emergent adoption is a
 robustness design only.
 
-v3.5.21: extracted from run_reviewer_robustness_suite.jl (following the
+v3.5.21: extracted from run_robustness_suite.jl (following the
 _safe_stats.jl shared-include pattern) so the suite and the six sibling
 mixed-tier drivers all share one regression-pinned implementation.
 Previously each driver carried a byte-similar private copy named
 `create_tier_assignments` plus an inline tier-override loop; those copies
 were verified algorithmically identical before consolidation
-.
+(2026-06-09, see the design notes).
 
 Regression coverage: test/test_fixed_tier_assignment.jl.
 """
