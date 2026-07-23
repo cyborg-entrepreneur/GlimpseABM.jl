@@ -1,4 +1,4 @@
-# Regression tests for the 2026-06-09 code/scientific review fixes.
+# Regression tests for engine-invariant fixes.
 # Each testset pins one fix; see the design notes for the
 # underlying findings.
 
@@ -9,7 +9,7 @@ using Statistics
 
 include("test_helpers.jl")
 
-@testset "2026-06 review fixes" begin
+@testset "engine-invariant fixes" begin
 
     # ------------------------------------------------------------------
     # T1-1: ai_herding_intensity must measure concentration, not volume.

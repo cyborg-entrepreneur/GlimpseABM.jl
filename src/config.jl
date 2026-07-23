@@ -398,7 +398,7 @@ parameters preserved for exact behavioral compatibility.
     # complexity, novelty, uncertainty, and candidate count (the multipliers
     # below) - cost scales with the scale and scope of usage, with no seat
     # fees. Rationale: (a) marginal-compute pricing is the architecture the
-    # review process pressed as the realistic world, and it is now the
+    # usage-based-pricing literature indicates as the realistic world, and it is now the
     # baseline rather than an ablation; (b) usage-priced costs are endogenous
     # to behavior rather than contractual; (c) per-analysis effective costs
     # are auditable abstractions of published API-billed agentic-task costs.
@@ -478,7 +478,7 @@ parameters preserved for exact behavioral compatibility.
     # ========================================================================
     TRAIT_DISTRIBUTIONS::Dict{String,TraitDistribution} = Dict(
         "uncertainty_tolerance" => TraitDistribution(dist="beta", params=Dict("a" => 1.05, "b" => 0.65)),
-        # Innovativeness respecified 2026-06-09 (robustness review of
+        # Innovativeness respecified (robustness check of
         # Table 1): the prior clamp(LogNormal(0.5, 0.5), 0, 1) was degenerate —
         # P(X ≥ 1) = Φ(1) ≈ 0.841, so ~84% of agents sat at exactly 1.0 and the
         # "heterogeneous innovativeness" the paper describes was a point mass
@@ -1015,7 +1015,7 @@ parameters preserved for exact behavioral compatibility.
     # ========================================================================
     # COMPETITION / NOVELTY-STATE SCALES
     # (The novelty-disruption mechanism that once lived here was excised
-    # 2026-06-09 as unreachable — review decision #4. The two fields below
+    # as unreachable. The two fields below
     # survive because live code still reads them.)
     # ========================================================================
     DISRUPTION_COMPETITION_THRESHOLD::Float64 = 10.0  # Competition normalization scale for strategic anticipation/diversification (agents.jl)

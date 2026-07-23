@@ -52,7 +52,7 @@ function hidden_ai_signal_state(n_exposures::Int, n_hallucinations::Int; seed::I
 end
 
 # Record forecast-disconfirmation exposures for one population. The channel
-# is symmetric since the 2026-06-09 review fix: ai_assisted=false records the
+# is symmetric by design: ai_assisted=false records the
 # human baseline population, ai_assisted=true the AI-assisted population.
 function record_population_disconfirmations!(
     env::KnightianUncertaintyEnvironment,

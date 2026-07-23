@@ -2,7 +2,7 @@
 #
 # Pre-v3.3.2 get_market_conditions passed market.tier_invest_share (and the
 # other dict-valued fields) by reference. Mutating the market after the
-# snapshot was taken mutated the snapshot too. Reviewer probe confirmed
+# snapshot was taken mutated the snapshot too. A debugging probe confirmed
 # `same_dict_ref=true`. Now dicts are copy/deepcopy'd at construction.
 
 using Test

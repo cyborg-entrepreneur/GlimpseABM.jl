@@ -1,5 +1,5 @@
 # Diagnostic invariant tests — designed to catch the data-flow / semantic
-# bugs that pure code review couldn't see. Each test sets up a small,
+# bugs that static inspection couldn't see. Each test sets up a small,
 # targeted scenario and asserts a numeric invariant that would have failed
 # under one of the v2/v2.1/v2.2/v2.3-era bugs.
 #
@@ -475,8 +475,7 @@ end
     end
 
     # (Former testset 11 covered update_lifecycle! stage transitions; the
-    # staged opportunity lifecycle was excised 2026-06-09 as unreachable —
-    # review decision #4.)
+    # staged opportunity lifecycle was excised as unreachable.)
 
     # ------------------------------------------------------------------
     # 12. Niche / spawn opportunity is visible to its creator (via override)

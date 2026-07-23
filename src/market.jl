@@ -509,8 +509,8 @@ function opportunity_signal_strength(opp::Opportunity)::Float64
     market_trace = 0.45 * invested_trace + 0.35 * competition_trace + 0.20 * impact_trace
 
     # Constant lifecycle term pinned at the "emerging" value (0.30): the staged
-    # opportunity lifecycle was excised 2026-06-09 as unreachable (review
-    # decision #4) — every opportunity stayed "emerging" in practice, so this
+    # opportunity lifecycle was excised as unreachable — every opportunity
+    # stayed "emerging" in practice, so this
     # term always contributed 0.15 * 0.30.
     lifecycle_signal = 0.30
 
@@ -852,7 +852,7 @@ function update_market_dynamics!(
 
     # Black swan probability: base rate modulated by AI investment share.
     # The former boom-streak escalation (BOOM_TAIL_UNCERTAINTY_EXPONENT) was
-    # excised 2026-06-09 (review decision #4): its investment_activity
+    # excised because its investment_activity
     # normalizer ($250K/agent/round) was unreachable under bet-sizing caps,
     # so boom_streak was identically 0 and the exponent never applied.
     base_prob = market.config.BLACK_SWAN_PROBABILITY
@@ -909,7 +909,7 @@ function update_macro_regime!(
         end
     end
 
-    # NOTE (2026-06-09, review decision #4): the former recession/crisis drag
+    # NOTE: the former recession/crisis drag
     # branch (`invest < 0.9 || momentum < -0.6`) was excised. Its
     # investment_activity normalizer ($250K/agent/round) was unreachable under
     # bet-sizing caps (realistic values 0.1-0.3), so the branch fired EVERY
@@ -1059,8 +1059,8 @@ function manage_opportunities!(
     end
 
     # Age all opportunities and decay competition. (The staged opportunity
-    # lifecycle that was once updated here was excised 2026-06-09 as
-    # unreachable — review decision #4.)
+    # lifecycle that was once updated here was excised as
+    # unreachable.)
     for opp in market.opportunities
         opp.age += 1
         opp.competition = max(0.0, opp.competition * (1.0 - market.config.COMPETITION_DECAY_RATE))

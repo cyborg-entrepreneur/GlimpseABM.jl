@@ -4,30 +4,30 @@ using Random
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using GlimpseABM
 
-module ReviewerRobustnessHarness
+module RobustnessHarness
 include(joinpath(@__DIR__, "..", "scripts", "run_robustness_suite.jl"))
 end
 
-const RRH = ReviewerRobustnessHarness
+const RRH = RobustnessHarness
 
-function _reviewer_condition(name::AbstractString)
+function _robustness_condition(name::AbstractString)
     by_name = Dict(c.name => c for c in RRH.all_conditions())
     @test haskey(by_name, name)
     return by_name[name]
 end
 
-function _reviewer_config(name::AbstractString; seed::Int=20260425)
-    return RRH.build_config(_reviewer_condition(name), seed)
+function _robustness_config(name::AbstractString; seed::Int=20260425)
+    return RRH.build_config(_robustness_condition(name), seed)
 end
 
-@testset "Reviewer robustness suite wiring" begin
+@testset "Robustness suite wiring" begin
     @testset "canonical tail and cost cells are live" begin
-        baseline = _reviewer_config("BASELINE")
-        truncated = _reviewer_config("TRUNCATED_TAIL")
-        moderate = _reviewer_config("MODERATE_TAIL")
-        cost_low = _reviewer_config("OPS_COST_060")
-        cost_mid = _reviewer_config("OPS_COST_075")
-        cost_high = _reviewer_config("OPS_COST_100")
+        baseline = _robustness_config("BASELINE")
+        truncated = _robustness_config("TRUNCATED_TAIL")
+        moderate = _robustness_config("MODERATE_TAIL")
+        cost_low = _robustness_config("OPS_COST_060")
+        cost_mid = _robustness_config("OPS_COST_075")
+        cost_high = _robustness_config("OPS_COST_100")
 
         @test baseline.NICHE_SIZE_LOG_SIGMA == RRH.NICHE_SIGMA
         @test truncated.NICHE_SIZE_LOG_SIGMA == 0.0
@@ -47,10 +47,10 @@ end
 
     @testset "effective-config export carries canonical tail fields" begin
         rows = RRH.effective_config_rows([
-            _reviewer_condition("BASELINE"),
-            _reviewer_condition("TRUNCATED_TAIL"),
-            _reviewer_condition("MODERATE_TAIL"),
-            _reviewer_condition("OPS_COST_075"),
+            _robustness_condition("BASELINE"),
+            _robustness_condition("TRUNCATED_TAIL"),
+            _robustness_condition("MODERATE_TAIL"),
+            _robustness_condition("OPS_COST_075"),
         ], 20260425)
 
         @test :niche_size_log_sigma in propertynames(rows)

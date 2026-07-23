@@ -10,7 +10,7 @@
 # framing detaches from decision utility and the paper's claim no longer
 # holds in the code.
 #
-# 2026-06-09 restoration (review finding): the guards below previously (a)
+# Restoration: the guards below previously (a)
 # asserted |Δ| > 0.001 (a vacuous floor ~80× weaker than the original 0.08
 # directional spread) and (b) mirrored a stale copy of the utility formula
 # (clamp(1 − unc·0.8, 0.2, 1.0) on RAW perception) instead of exercising the

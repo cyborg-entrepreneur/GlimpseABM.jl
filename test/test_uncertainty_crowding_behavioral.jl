@@ -36,7 +36,7 @@ function behavioral_uncertainty_state(
     # competition only via action["chosen_opportunity_obj"] — fabricated
     # string IDs never touch it. The pre-fix harness used fabricated IDs, so
     # the signal evaluated 0.0 on BOTH sides of every comparison and the
-    # crowding assertions passed vacuously (review finding, 2026-06-09).
+    # crowding assertions passed vacuously.
     actions = actions_or_builder isa Vector ? actions_or_builder :
               actions_or_builder(market)
 

@@ -1,6 +1,6 @@
 # Producer/consumer consistency check for action-dict keys.
 #
-# v2.3 review caught three "silent zero" bugs where a consumer read key X but
+# v2.3 auditing caught three "silent zero" bugs where a consumer read key X but
 # producers emitted key Y (e.g. "investment_amount" vs "amount"). Both names
 # look reasonable in isolation; the bug is invisible to a code reader.
 #

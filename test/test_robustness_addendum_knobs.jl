@@ -1,4 +1,4 @@
-# Reviewer-addendum knob tests (the adoption-family design notes):
+# Robustness-addendum knob tests (the adoption-family design notes):
 # AI_BIAS_INTENSITY (NO_AI_BIAS cell) + WEALTH_COMPUTE_SCALING
 # (WEALTH_SCALED_COMPUTE cell).
 #
@@ -72,7 +72,7 @@ end
 
 # ── 1. defaults ──────────────────────────────────────────────────────────────
 
-@testset "Reviewer addendum: knob defaults are neutral" begin
+@testset "Robustness addendum: knob defaults are neutral" begin
     config = EmergentConfig()
     @test config.AI_BIAS_INTENSITY == 1.0
     @test config.WEALTH_COMPUTE_SCALING == 0.0

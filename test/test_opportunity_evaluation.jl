@@ -101,7 +101,7 @@ end
     @test [e.final_score for e in evals] == [2.0, 1.0, 0.5]
 end
 
-@testset "Reviewer-facing AI mechanism hooks fire on runtime paths" begin
+@testset "AI mechanism hooks fire on runtime paths" begin
     config = EmergentConfig()
     GlimpseABM.initialize!(config)
     config.AI_EXECUTION_SUCCESS_MULTIPLIERS["premium"] = 4.0
@@ -113,7 +113,7 @@ end
     config.STRATEGIC_ANTICIPATION_STRENGTH = 1.0
 
     opp = Opportunity(
-        id="reviewer_probe",
+        id="mechanism_probe",
         latent_return_potential=2.0,
         latent_failure_potential=0.55,
         complexity=0.8,

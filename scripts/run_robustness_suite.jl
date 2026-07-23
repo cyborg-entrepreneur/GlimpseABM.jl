@@ -376,7 +376,7 @@ ops_cost_100!(config::EmergentConfig) = (config.OPS_COST_INTENSITY = 1.00; nothi
 difficulty_scaled_ai_cost!(config::EmergentConfig) = (config.AI_DIFFICULTY_COST_SCALING = 1.0; nothing)
 ai_complementarity_on!(config::EmergentConfig) = (config.AI_COMPLEMENTARITY_STRENGTH = 1.0; nothing)
 
-# ── Reviewer addendum (2026-06-11): unaided-floor sweep, bias-free AI,
+# ── Robustness addendum: unaided-floor sweep, bias-free AI,
 #    wealth-scaled compute, and endogenous-adoption learning variants ────────
 # NO_AI_BIAS completes the pathology-removal family: hallucination and
 # overconfidence were already removable (NO_AI_ERRORS); the small systematic
@@ -2617,7 +2617,7 @@ function main()
 
     println()
     println("="^80)
-    println("Reviewer robustness suite complete")
+    println("Robustness suite complete")
     println("Output: $OUTPUT_DIR")
     println("="^80)
     show(paired_df[!, [:condition, :category, :tier_label, :mean_te_pp, :ci95_low_pp, :ci95_high_pp]], allrows=true)

@@ -18,7 +18,6 @@ The four dimensions of Knightian uncertainty modeled are:
 3. Agentic Novelty - Genuinely new possibilities from creative action
 4. Competitive Recursion - Strategic interdependence effects
 
-Author: David Townsend
 License: MIT
 """
 module GlimpseABM

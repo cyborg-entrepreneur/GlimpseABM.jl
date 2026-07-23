@@ -1922,8 +1922,8 @@ function _observable_opportunity_signal(
     )
 
     # Constant lifecycle term pinned at the "emerging" value (0.30): the staged
-    # opportunity lifecycle was excised 2026-06-09 as unreachable (review
-    # decision #4) — every opportunity stayed "emerging" in practice.
+    # opportunity lifecycle was excised as unreachable — every opportunity
+    # stayed "emerging" in practice.
     lifecycle_signal = 0.30
 
     signal = (
@@ -2393,8 +2393,8 @@ function perceive_uncertainty(
         competition = hasfield(typeof(opp), :competition) ? opp.competition : 0.0
         adoption = hasfield(typeof(opp), :market_share) ? opp.market_share : 0.0
 
-        # The former per-stage lifecycle multiplier was excised 2026-06-09
-        # (review decision #4): every opportunity stayed "emerging", whose
+        # The former per-stage lifecycle multiplier was excised because
+        # every opportunity stayed "emerging", whose
         # multiplier was 1.0, so it never altered urgency.
         urgency = competition * pw.timing_competition_weight + adoption * pw.timing_adoption_weight
 
@@ -2870,8 +2870,7 @@ function perceive_uncertainty(
 
     # Overall uncertainty from all dimensions.
     #
-    # DESIGN STATEMENT — agentic-novelty sign (decision resolved 2026-06-09,
-    # review item 1 in the design notes): novelty enters DECISION
+    # DESIGN STATEMENT — agentic-novelty sign: novelty enters DECISION
     # CONFIDENCE inverted, via (1 − novelty) under the *_novelty_resolved_
     # weight. The theory: agentic novelty the agent itself perceives represents
     # opportunity space the agent has actively opened — self-authored novelty

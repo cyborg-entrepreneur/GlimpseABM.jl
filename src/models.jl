@@ -216,7 +216,7 @@ function realized_return(
     risk_signal = clamp(risk_signal * regime_failure, 0.05, 0.95)
 
     # Constant demand-side factor; the staged lifecycle it once keyed off was
-    # excised 2026-06-09 as unreachable (review decision #4) — every opportunity
+    # excised as unreachable — every opportunity
     # stayed "emerging" (stage transitions required adoption_rate > 0.2 of ALL
     # agents on one opportunity in one round; realistic values ~0.005), so this
     # factor always evaluated to the "emerging" multiplier 1.12. Re-derive from
@@ -466,7 +466,7 @@ function realized_return(
     # Provenance + design properties documented at the RETURN_NOISE_SCALE
     # definition in config.jl. No hasfield fallback: EmergentConfig statically
     # owns the field, and a frozen fallback literal is exactly the silent-drift
-    # pattern the 2026-06 reviews caught twice elsewhere. config === nothing is
+    # pattern seen twice elsewhere. config === nothing is
     # the config-less diagnostic/test path only, which runs noise-free by design.
     return_noise_scale = isnothing(config) ? 0.0 :
         max(0.0, Float64(config.RETURN_NOISE_SCALE))
