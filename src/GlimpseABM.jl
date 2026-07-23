@@ -8,7 +8,7 @@ Theoretical Foundation
 ----------------------
 This model operationalizes concepts from:
 
-    Townsend, D. M., Hunt, R. A., Rady, R., Manocha, P., & Jin, J-H. (2025).
+    Townsend, D. M., Hunt, R. A., Rady, J., Manocha, P., & Jin, J-H. (2025).
     Are the futures computable? Knightian uncertainty & artificial intelligence.
     Academy of Management Review, 50(2), 415-440.
 
