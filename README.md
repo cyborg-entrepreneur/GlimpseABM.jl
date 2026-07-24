@@ -52,6 +52,10 @@ schemas, agent decision paths, opportunity evaluation, crowding dynamics,
 confidence-based sizing, the four-dimensional uncertainty accounting, the
 paradox scorecard, and I/O round-trips.
 
+## Reproducing the paper
+
+See [REPRODUCING.md](REPRODUCING.md) for the mapping from each manuscript exhibit to its driver script, the production-run manifests (`manifests/`), and the supplementary appendices (`docs/supplementary_appendices.docx`).
+
 ## Experiments
 
 All scripts run with `--project=.` and write generated outputs under `results/`
