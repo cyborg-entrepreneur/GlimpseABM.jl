@@ -102,6 +102,7 @@ mutable struct Opportunity
     total_invested::Float64             # Track total investment for capacity constraints
     capacity::Float64                   # Max investment capacity
     knowledge_components::Vector{String}  # S2 per-opportunity edge: component IDs the niche draws on (gated; empty unless ENABLE_OPPORTUNITY_COMPONENTS)
+    committed_prev_round::Float64        # Lagged (prior-round) outstanding commitment; read only by the performative-demand test, snapshotted at the end-of-round lifecycle boundary
 end
 
 function Opportunity(;
@@ -137,6 +138,7 @@ function Opportunity(;
     total_invested::Float64 = 0.0,      # Track total investment
     capacity::Float64 = 0.0,            # 0 = sentinel: sample from config
     knowledge_components::Vector{String} = String[],  # S2 per-opportunity edge (gated; default empty = byte-identical)
+    committed_prev_round::Float64 = 0.0,  # lagged commitment snapshot (performative-demand test only; default 0 = byte-identical)
     # Seedable RNG for reproducible capacity sampling. Default falls back to
     # global rand() for backwards compatibility with ad-hoc Opportunity
     # construction, but production paths (market._create_realistic_opportunity,
@@ -154,7 +156,7 @@ function Opportunity(;
         combination_signature, market_impact, origin_innovation_id,
         crowding_penalty, component_scarcity,
         novelty_score, total_invested, capacity,
-        knowledge_components
+        knowledge_components, committed_prev_round
     )
 
     # Initialize base_failure_potential if not set
@@ -164,15 +166,18 @@ function Opportunity(;
 
     # Sample capacity from config IF the caller didn't pass an explicit value
     # (capacity==0.0 is the sentinel for "please sample"). Callers that need
-    # a specific capacity — e.g., tests probing the crowding penalty, or
-    # spawn_opportunity_from_innovation! which computes its own — pass
-    # capacity=… and keep their explicit value. Uses the passed RNG so
-    # reproducibility is preserved across seeds.
+    # a specific capacity — e.g., tests probing the crowding penalty — pass
+    # capacity=… and keep their explicit value. Created opportunities
+    # (spawn_opportunity_from_innovation!, create_niche_opportunity) leave the
+    # sentinel deliberately so created and endowed niches share ONE canonical
+    # capacity distribution. Uses the passed RNG so reproducibility is preserved
+    # across seeds.
     if opp.capacity <= 0.0 && !isnothing(config) && hasfield(typeof(config), :OPPORTUNITY_BASE_CAPACITY)
         niche_sigma = hasfield(typeof(config), :NICHE_SIZE_LOG_SIGMA) ? config.NICHE_SIZE_LOG_SIGMA : 0.0
         if niche_sigma > 0.0
             # Heavy-tailed niche/market size: mean-preserving lognormal (most niches
-            # small, a few enormous) — the venture-realistic heavy tail at the SIZE level.
+            # small, a few enormous). This is a design distribution whose mean and
+            # dispersion require sensitivity tests, not a direct empirical calibration.
             opp.capacity = config.OPPORTUNITY_BASE_CAPACITY * exp(niche_sigma * randn(rng) - 0.5 * niche_sigma^2)
         else
             variance = hasfield(typeof(config), :OPPORTUNITY_CAPACITY_VARIANCE) ? config.OPPORTUNITY_CAPACITY_VARIANCE : 0.3
@@ -181,6 +186,105 @@ function Opportunity(;
     end
 
     return opp
+end
+
+"""
+Return the exact opportunity-capacity crowding terms used by realization.
+
+The canonical effective load is opportunity-specific outstanding capital
+relative to productive capacity (`I/K`). `CROWDING_INDEX_BLEND` optionally adds
+the legacy market-wide action-HHI term in the named robustness condition. The
+same helper feeds payoff realization and telemetry so the reported multiplier
+cannot drift from the model equation.
+"""
+function capacity_crowding_terms(
+    opp::Opportunity,
+    market_conditions::MarketConditions,
+    config::Union{EmergentConfig,Nothing}=opp.config;
+    commitment_share::Float64=1.0,
+    current_total_invested::Union{Float64,Nothing}=nothing,
+)
+    # Performative-demand post-hoc test (off at baseline). The effective niche
+    # capacity K (the opportunity's implicit customer demand) grows with the
+    # LAGGED collective dollar commitment the market has attracted, so demand is
+    # constituted by prior collective action rather than fixed:
+    #   K_eff = K · (1 + ψ · C/(C+K) · share),   C = opp.committed_prev_round.
+    # This is the demand-side counterpart to the supply-side crowding penalty
+    # below, which reads the CURRENT-round I/K — a distinct quantity from the
+    # prior-round C, so the two channels are not tautological. ψ=0 → K_eff==K
+    # exactly (byte-identical baseline). share=1.0 is the common variant (enlarged
+    # demand shared by all); share<1.0 is the appropriable variant (uplift scaled
+    # to the founder's own commitment share), set by the caller.
+    base_capacity = Float64(opp.capacity)
+    effective_capacity = base_capacity
+    lagged_commitment = max(0.0, Float64(opp.committed_prev_round))
+    share = Float64(commitment_share)
+    isfinite(share) || error("commitment_share must be finite; got $(share).")
+    share = clamp(share, 0.0, 1.0)
+    elasticity = isnothing(config) ? 0.0 :
+        Float64(config.PERFORMATIVE_DEMAND_ELASTICITY)
+    if !isfinite(elasticity) || elasticity < 0.0
+        error("PERFORMATIVE_DEMAND_ELASTICITY must be finite and >= 0; " *
+              "got $(elasticity).")
+    end
+    performative_uplift_fraction = 0.0
+    if elasticity > 0.0 && base_capacity > 0.0
+        commitment_intensity = lagged_commitment /
+            (lagged_commitment + base_capacity)
+        performative_uplift_fraction =
+            elasticity * commitment_intensity * share
+        effective_capacity *= (1.0 + performative_uplift_fraction)
+    end
+    enabled = !isnothing(config) &&
+        config.USE_CAPACITY_CONVEXITY_CROWDING
+    outstanding_capital = isnothing(current_total_invested) ?
+        Float64(opp.total_invested) : Float64(current_total_invested)
+    investment_capacity_ratio = effective_capacity > 0.0 ?
+        max(0.0, outstanding_capital) / effective_capacity : 0.0
+    action_hhi = Float64(get(
+        market_conditions.crowding_metrics,
+        "crowding_index",
+        0.25,
+    ))
+    blend = isnothing(config) ? 0.0 : Float64(config.CROWDING_INDEX_BLEND)
+    effective_load = investment_capacity_ratio + blend * action_hhi
+
+    if !enabled
+        return (
+            enabled=false,
+            base_capacity=base_capacity,
+            effective_capacity=effective_capacity,
+            performative_lagged_commitment=lagged_commitment,
+            performative_commitment_share=share,
+            performative_uplift_fraction=performative_uplift_fraction,
+            investment_capacity_ratio=investment_capacity_ratio,
+            action_hhi=action_hhi,
+            effective_load=effective_load,
+            excess_load=0.0,
+            penalty=0.0,
+            multiplier=1.0,
+        )
+    end
+
+    capacity_threshold = Float64(config.CROWDING_CAPACITY_RATIO_K)
+    convexity = Float64(config.CROWDING_CONVEXITY_GAMMA)
+    strength = Float64(config.CROWDING_STRENGTH_LAMBDA)
+    excess_load = max(0.0, effective_load / capacity_threshold - 1.0)
+    penalty = strength * excess_load^convexity
+    return (
+        enabled=true,
+        base_capacity=base_capacity,
+        effective_capacity=effective_capacity,
+        performative_lagged_commitment=lagged_commitment,
+        performative_commitment_share=share,
+        performative_uplift_fraction=performative_uplift_fraction,
+        investment_capacity_ratio=investment_capacity_ratio,
+        action_hhi=action_hhi,
+        effective_load=effective_load,
+        excess_load=excess_load,
+        penalty=penalty,
+        multiplier=exp(-penalty),
+    )
 end
 
 """
@@ -195,13 +299,14 @@ function realized_return(
     opp::Opportunity,
     market_conditions::MarketConditions,
     investor_tier::Union{String,Nothing} = nothing;
-    rng::Random.AbstractRNG = Random.default_rng()
+    rng::Random.AbstractRNG = Random.default_rng(),
+    commitment_share::Float64 = 1.0,
+    current_total_invested::Union{Float64,Nothing} = nothing,
 )::Float64
     config = opp.config
-    # Heavy-tail returns (2026-06-15): when enabled, realized returns track the
-    # opportunity's full latent value (bounded by RETURN_CLAMP_MAX); the convex
-    # crowding penalty below still dilutes crowded opportunities. Off keeps the
-    # legacy thin caps. `rcm` is the shared ceiling for every lifted cap.
+    # When enabled, realized returns track the opportunity's full latent value
+    # bounded by RETURN_CLAMP_MAX; the convex crowding penalty below still
+    # dilutes crowded opportunities. `rcm` is the shared ceiling.
     heavy = !isnothing(config) && config.HEAVY_TAIL_RETURNS
     rcm = isnothing(config) ? 200.0 : Float64(config.RETURN_CLAMP_MAX)
     # Base multiple from latent potential
@@ -215,12 +320,7 @@ function realized_return(
     regime_failure = Float64(market_conditions.regime_failure_multiplier)
     risk_signal = clamp(risk_signal * regime_failure, 0.05, 0.95)
 
-    # Constant demand-side factor; the staged lifecycle it once keyed off was
-    # excised as unreachable — every opportunity
-    # stayed "emerging" (stage transitions required adoption_rate > 0.2 of ALL
-    # agents on one opportunity in one round; realistic values ~0.005), so this
-    # factor always evaluated to the "emerging" multiplier 1.12. Re-derive from
-    # a reachable adoption metric if lifecycle dynamics are ever needed.
+    # Constant demand-side factor for the emerging-opportunity lifecycle state.
     lifecycle_factor = 1.12
     resilience = clamp(0.75 + 0.25 * (1.0 - risk_signal), 0.55, 1.45)
 
@@ -278,7 +378,7 @@ function realized_return(
         0.0
     end
 
-    # Scarcity ceiling (legacy thin-tail path). Heavy-tail path lets the central
+    # Scarcity ceiling for the default return path. Heavy-tail path lets the central
     # tendency track the opportunity's latent value up to RETURN_CLAMP_MAX.
     scarcity_ceiling = 4.5 + 1.4 * scarcity_signal
     base_mean = clamp(base_mean, 0.2, heavy ? rcm : min(15.0, scarcity_ceiling))
@@ -292,37 +392,32 @@ function realized_return(
     # propagate faithfully.
     convex_crowding_penalty = 0.0
 
-    use_capacity_convexity = !isnothing(config) &&
-        hasfield(typeof(config), :USE_CAPACITY_CONVEXITY_CROWDING) &&
-        config.USE_CAPACITY_CONVEXITY_CROWDING
+    crowding_terms = capacity_crowding_terms(
+        opp,
+        market_conditions,
+        config;
+        commitment_share=commitment_share,
+        current_total_invested=current_total_invested,
+    )
+    use_capacity_convexity = crowding_terms.enabled
 
     if use_capacity_convexity
         # =====================================================================
         # CAPITAL-SATURATION CONVEXITY CROWDING
         # =====================================================================
-        #   penalty    = λ · max(0, S/K_sat − 1)^γ
+        #   penalty    = λ · max(0, (I/K_o)/κ − 1)^γ
         #   net_return = base_return · exp(−penalty)
-        #   S          = opp.total_invested / opp.capacity   (capital saturation)
+        #   I          = outstanding capital committed to opportunity o
+        #   K_o        = opportunity o's productive capital capacity
+        #   κ          = oversubscription threshold (CROWDING_CAPACITY_RATIO_K)
         #
         # Crowding is keyed on dollar saturation, not competitor headcount: ten
         # $10k investments and one $10M investment impose materially different
         # crowding, and dollar saturation is the economically correct signal.
         # =====================================================================
-        K_sat = hasfield(typeof(config), :CROWDING_CAPACITY_RATIO_K) ? config.CROWDING_CAPACITY_RATIO_K : 1.5
-        γ = hasfield(typeof(config), :CROWDING_CONVEXITY_GAMMA) ? config.CROWDING_CONVEXITY_GAMMA : 1.5
-        λ = hasfield(typeof(config), :CROWDING_STRENGTH_LAMBDA) ? config.CROWDING_STRENGTH_LAMBDA : 1.5
-
-        # Capital saturation: how full is the opportunity relative to capacity?
-        saturation = (hasfield(typeof(opp), :capacity) && opp.capacity > 0.0) ?
-            (opp.total_invested / opp.capacity) : 0.0
-
-        # Market-wide crowding adds a smaller rising-tide contribution.
-        crowding_metrics = market_conditions.crowding_metrics
-        crowding_index = Float64(get(crowding_metrics, "crowding_index", 0.25))
-        effective_sat = saturation + crowding_index * 0.3
-
-        excess = max(0.0, effective_sat / K_sat - 1.0)
-        convex_crowding_penalty = λ * (excess ^ γ)
+        # The helper is shared with maturity telemetry so the reported applied
+        # multiplier cannot drift from the payoff equation.
+        convex_crowding_penalty = crowding_terms.penalty
 
         # Scarcity and novelty adjustments.
         scarcity_bonus = 0.10 * scarcity_signal
@@ -339,12 +434,12 @@ function realized_return(
         # competition rather than dollar saturation.
         combo_hhi = Float64(get(market_conditions.extras, "combo_hhi", 0.0))
         reuse_penalty = coalesce(opp.crowding_penalty, 0.0)
-        crowding_penalty_legacy = (0.25 * combo_hhi + 0.2 * reuse_penalty + 0.1 * reuse_pressure) * max(0.0, 1.0 - scarcity_signal)
+        structural_crowding_penalty = (0.25 * combo_hhi + 0.2 * reuse_penalty + 0.1 * reuse_pressure) * max(0.0, 1.0 - scarcity_signal)
         scarcity_bonus = 0.15 * scarcity_signal
         novelty_relief = max(0.0, novelty_signal - 0.5) * 0.3
 
         structural_adjustment = clamp(
-            1.0 - crowding_penalty_legacy + scarcity_bonus + novelty_relief,
+            1.0 - structural_crowding_penalty + scarcity_bonus + novelty_relief,
             0.5,
             1.45
         )
@@ -465,9 +560,8 @@ function realized_return(
     # but lets otherwise similar opportunities realize different outcomes.
     # Provenance + design properties documented at the RETURN_NOISE_SCALE
     # definition in config.jl. No hasfield fallback: EmergentConfig statically
-    # owns the field, and a frozen fallback literal is exactly the silent-drift
-    # pattern seen twice elsewhere. config === nothing is
-    # the config-less diagnostic/test path only, which runs noise-free by design.
+    # owns the field. config === nothing is the config-less diagnostic/test path
+    # only, which runs noise-free by design.
     return_noise_scale = isnothing(config) ? 0.0 :
         max(0.0, Float64(config.RETURN_NOISE_SCALE))
     if return_noise_scale > 0.0
@@ -730,7 +824,7 @@ end
 """
 Update Bayesian beliefs about AI tier effectiveness based on realized return multiplier.
 
-Uses continuous evidence derived from the return multiplier (matches Python implementation).
+Uses continuous evidence derived from the return multiplier.
 Higher returns provide stronger positive evidence, lower returns provide negative evidence.
 The evidence is computed as: stable_sigmoid((multiplier - 1.0) * 2.5), clamped to [0.02, 0.98].
 """
@@ -743,7 +837,7 @@ function update_tier_belief!(profile::AILearningProfile, tier::String, realized_
 
     belief = profile.tier_beliefs[tier]
 
-    # Compute continuous evidence from realized multiplier (matches Python lines 1551-1554)
+    # Compute continuous evidence from realized multiplier.
     multiplier = clamp(realized_multiplier, 0.0, 3.0)
     evidence = clamp(stable_sigmoid((multiplier - 1.0) * 2.5), 0.02, 0.98)
 
@@ -809,9 +903,7 @@ function should_use_ai_for_domain(
         max(0.0, 1.0 - cost_ratio)
     end
 
-    # Apply the exploration bonus once (to the score). Subtracting it from the
-    # threshold as well double-applied it, making the first 5 uses of any
-    # domain nearly unconditional for a solvent agent.
+    # Apply the exploration bonus once to the score, leaving the threshold fixed.
     threshold = 0.4
     decision_score = (trust + exploration_bonus) * cost_factor
     return decision_score > threshold
@@ -822,7 +914,7 @@ Get adjusted confidence based on learned AI trust.
 """
 function get_adjusted_confidence(profile::AILearningProfile, ai_confidence::Float64, domain::String)::Float64
     trust = get(profile.domain_trust, domain, 0.5)
-    # `hallucination_experiences` is retained as the compatibility field name,
+    # `hallucination_experiences` is the storage field name,
     # but its behavioral content is observable suspected AI disconfirmation.
     hall_count = get(profile.hallucination_experiences, domain, 0)
     usage = get(profile.usage_count, domain, 1)
@@ -1094,11 +1186,6 @@ function add_investment!(
     update_diversification!(portfolio)
 end
 
-# REMOVED: check_matured_investments! — a zero-caller legacy stub that used a
-# hard-coded risk (0.5) and a capped 1.0-1.2x return model with no opportunity
-# linkage. The live maturation path is process_matured_investments! in
-# agents.jl, which prices outcomes through realized_return.
-
 """
 Update portfolio diversification score.
 """
@@ -1230,11 +1317,6 @@ function get_response_factor(
     return 1.0 - (uncertainty_level * weight)
 end
 
-# REMOVED: update_from_outcome! — a zero-caller legacy twin of
-# update_uncertainty_response_from_outcome! (agents.jl), which is the live
-# path and maintains its own outcome-history push. Only the shared
-# update_response_weight! below remains in use.
-
 """
 Update response weight for a specific uncertainty type.
 """
@@ -1309,12 +1391,16 @@ struct OpportunityEvaluation
     ai_contains_hallucination::Bool
     ai_confidence::Float64
     ai_actual_accuracy::Float64
+    posthoc_weak_exposure::Float64
+    posthoc_weak_targeting_multiplier::Float64
+    posthoc_weak_agent_targeting_applied::Bool
+    posthoc_weak_agent_target_pool_size::Int
+    posthoc_weak_agent_visible_pool_size::Int
 end
 
-# Keyword constructor with safe defaults for the optional AI fields. The
-# previous dict producer omitted these entries entirely when no Information
-# object was available; storing typed zeros plus an explicit `ai_info ===
-# nothing` flag makes that condition checkable without `haskey`.
+# Keyword constructor with safe defaults for the optional AI fields. Typed zeros
+# plus an explicit `ai_info === nothing` flag make missing-information cases
+# checkable without `haskey`.
 function OpportunityEvaluation(;
     opportunity::Opportunity,
     final_score::Float64,
@@ -1325,15 +1411,24 @@ function OpportunityEvaluation(;
     ai_contains_hallucination::Bool = false,
     ai_confidence::Float64 = 0.0,
     ai_actual_accuracy::Float64 = 0.0,
+    posthoc_weak_exposure::Float64 = 0.0,
+    posthoc_weak_targeting_multiplier::Float64 = 1.0,
+    posthoc_weak_agent_targeting_applied::Bool = false,
+    posthoc_weak_agent_target_pool_size::Int = 0,
+    posthoc_weak_agent_visible_pool_size::Int = 0,
 )
     OpportunityEvaluation(
         opportunity, final_score, ai_level_used, estimated_return,
         competition_at_evaluation, ai_info, ai_contains_hallucination,
         ai_confidence, ai_actual_accuracy,
+        posthoc_weak_exposure, posthoc_weak_targeting_multiplier,
+        posthoc_weak_agent_targeting_applied,
+        posthoc_weak_agent_target_pool_size,
+        posthoc_weak_agent_visible_pool_size,
     )
 end
 
-# Legacy Dict-like read access — same pattern as MarketConditions
+# Dict-like read access — same pattern as MarketConditions
 # (market_conditions.jl:55-74). Returns the typed field if present; falls
 # through to the supplied default only if the key is genuinely unknown.
 function Base.get(ev::OpportunityEvaluation, key::AbstractString, default)

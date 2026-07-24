@@ -5,7 +5,7 @@ push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using GlimpseABM
 include("test_helpers.jl")
 
-@testset "Sham AI labels do not leak behavioral AI effects" begin
+@testset "Sham AI labels do not introduce behavioral AI effects" begin
     config = EmergentConfig()
     GlimpseABM.initialize!(config)
     config.SHAM_AI_LABELS_USE_NONE = true
@@ -142,4 +142,4 @@ include("test_helpers.jl")
     @test env._volatility_state["last_ai_shares"] == [1.0, 0.0, 0.0, 0.0]
 end
 
-println("Sham AI placebo regression tests passed.")
+println("Sham AI placebo tests passed.")

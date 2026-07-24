@@ -2,11 +2,9 @@
 Action-dict field name constants.
 
 The agent action / outcome dicts (`Dict{String,Any}`) flow from agent code
-(producer) to simulation/market code (consumer). When a producer writes
-`outcome["amount"]` and a consumer reads `get(action, "investment_amount", 0)`,
-the dataflow silently zeroes — the bug is invisible to a code reader because
-both names are plausible, and the missing key reads as a benign default rather
-than an error.
+(producer) to simulation/market code (consumer). Centralizing shared key names
+keeps producers and consumers aligned when a field has multiple plausible
+labels.
 
 This module centralizes the names most prone to that mismatch so producer/
 consumer pairs reference the same constant. The accompanying
@@ -21,7 +19,7 @@ module ActionKeys
 
 # Identification
 const ACTION              = "action"               # invest / innovate / explore / maintain
-const ACTION_TYPE         = "action_type"          # alias used by some legacy paths
+const ACTION_TYPE         = "action_type"          # compatibility alias
 const AGENT_ID            = "agent_id"
 const ROUND               = "round"
 
@@ -41,7 +39,7 @@ const MATURITY_ROUND      = "maturity_round"
 
 # Investment action — perception
 const ESTIMATED_RETURN    = "estimated_return"     # AI-tier-aware estimate (canonical)
-const EXPECTED_RETURN     = "expected_return"      # legacy alias; consumers should fall back
+const EXPECTED_RETURN     = "expected_return"      # compatibility alias
 const INFO_QUALITY_USED   = "info_quality_used"
 const INFO_BREADTH_USED   = "info_breadth_used"
 const COMPETITION_AT_INV  = "competition_at_investment"

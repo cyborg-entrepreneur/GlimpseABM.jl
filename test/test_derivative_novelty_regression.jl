@@ -106,4 +106,4 @@ end
     @test high_derivative < low_derivative
 end
 
-println("Derivative-novelty regression tests passed.")
+println("Derivative-novelty tests passed.")

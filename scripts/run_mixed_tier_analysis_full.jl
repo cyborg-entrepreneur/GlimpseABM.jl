@@ -15,8 +15,14 @@ Usage:
     julia --threads=auto --project=. scripts/run_mixed_tier_analysis_full.jl
 """
 
-using Pkg
-Pkg.activate(joinpath(@__DIR__, ".."))
+# Activate the project environment only when run as a standalone script.
+# Under `Pkg.test()` this file is include()d by test_variance_wiring.jl for
+# paired_treatment_effects; the test sandbox has no Pkg stdlib on the load
+# path and must not have its active environment switched mid-suite.
+if abspath(PROGRAM_FILE) == @__FILE__
+    import Pkg
+    Pkg.activate(joinpath(@__DIR__, ".."))
+end
 
 using GlimpseABM
 using Statistics
@@ -32,9 +38,9 @@ include(joinpath(@__DIR__, "_launch_metadata.jl"))
 # EXPERIMENT PARAMETERS
 # ============================================================================
 
-# v3.5.21+: N_AGENTS / N_RUNS / N_ROUNDS readable from env so we can spin
-# off N-sensitivity appendix runs (N=1000, 5000) without forking the script.
-# Defaults match the v3.5.20 paper-headline configuration.
+# N_AGENTS / N_RUNS / N_ROUNDS are environment-configurable for
+# N-sensitivity appendix runs without forking the script. Defaults match the
+# paper-headline configuration.
 const N_AGENTS = parse(Int, get(ENV, "N_AGENTS", "2000"))
 const N_ROUNDS = parse(Int, get(ENV, "N_ROUNDS", "60"))
 const N_RUNS   = parse(Int, get(ENV, "N_RUNS",   "50"))
@@ -284,8 +290,6 @@ end
 function create_config(; seed::Int=42)
     # Inherit BLS-calibrated defaults: SURVIVAL_THRESHOLD=$2M,
     # INITIAL_CAPITAL_RANGE=($2.5M, $10M), heterogeneous capital + threshold.
-    # Match the v3.3.4 revaluation so mixed-tier survival is directly
-    # comparable to the single-population baseline (mean 0.540, BLS 50-55%).
     EmergentConfig(
         N_AGENTS=N_AGENTS,
         N_ROUNDS=N_ROUNDS,
@@ -309,8 +313,8 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
         seed=seed
     )
 
-    # Override with fixed tier assignments + v2.9 subscription hygiene
-    # (shared implementation in _fixed_tier_assignment.jl).
+    # Apply balanced fixed-tier assignments and subscription state updates via
+    # the shared helper.
     apply_balanced_fixed_tiers!(sim, tier_assignments)
 
     # Per-round survival trajectories per tier
@@ -338,10 +342,8 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
     end
 
     # End-of-run aggregation. Action shares are computed from agent.action_history
-    # over ALL agents (alive + dead), not just survivors at the end. Earlier
-    # passes used last_action on agents alive after each step!, which excluded
-    # actions taken by agents that died that round — biasing shares toward the
-    # actions of survivors. Using action_history over all agents fixes that.
+    # over all agents (alive + failed), so the metric covers the full realized
+    # behavior sequence rather than only end-of-run survivors.
     tier_stats = Dict{String, Dict{String, Any}}()
     all_emergent_by_tier = GlimpseABM.aggregate_emergent_uncertainty_by_tier(
         sim.agents;
@@ -373,7 +375,7 @@ function run_single_mixed_simulation(run_idx::Int, seed::Int)
         innovate_share = total_actions > 0 ? action_counts["innovate"] / total_actions : 0.0
         explore_share = total_actions > 0 ? action_counts["explore"] / total_actions : 0.0
 
-        # Innovation metrics — agent struct fields (v3.3.4+, post-bug-fix)
+        # Innovation metrics from agent struct fields.
         tier_innovation_count = sum(a.innovation_count for a in tier_agents)
         tier_innovation_successes = sum(a.innovation_success_count for a in tier_agents)
         tier_innovation_success_rate = tier_innovation_count > 0 ?
@@ -581,8 +583,8 @@ end
 
 function scorecard_emergent_observations(stats::AbstractDict, dim::String)::Float64
     all_agent_key = "all_agent_emergent_$(dim)_observations"
-    legacy_key = "emergent_$(dim)_observations"
-    return Float64(get(stats, all_agent_key, get(stats, legacy_key, 0.0)))
+    fallback_key = "emergent_$(dim)_observations"
+    return Float64(get(stats, all_agent_key, get(stats, fallback_key, 0.0)))
 end
 
 function scorecard_metric_delta_band(

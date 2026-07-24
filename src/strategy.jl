@@ -1,8 +1,7 @@
 """
-AGI strategy ladder — S1/S2/S3 decision strategies.
+Strategy ladder — S1/S2/S3 decision strategies.
 
-Implements the strategy rungs specified in
-the strategy-ladder design notes:
+Implements the strategy rungs:
 
   S1 `consensus_discounting`  anticipatory congestion shade on the expected
                               return of consensus-legible opportunities
@@ -37,14 +36,14 @@ default-neutrality test and the debug counter below).
 # simulation — structural proof that no strategy code path is reachable when
 # inactive. Atomic because suite runs execute simulations on multiple threads.
 #
-# G4 hot-path hygiene (2026-06-09): increments are gated behind a debug flag
+# Hot-path instrumentation: increments are gated behind a debug flag
 # (Ref{Bool}, default false) so production ladder cells pay one non-atomic
 # boolean load per computation instead of a contended atomic add.
 # `reset_strategy_eval_count!()` ENABLES counting as a side effect — resetting
 # only ever happens in tests about to measure the counter, so the ==0
 # neutrality pins and the >0 liveness pins keep their meaning without every
 # test file having to know about the flag. Production never resets, so the
-# flag stays false for production runs.
+# flag stays false for ARC runs.
 const STRATEGY_EVAL_COUNT = Threads.Atomic{Int}(0)
 const STRATEGY_EVAL_COUNT_ENABLED = Ref{Bool}(false)
 
@@ -207,21 +206,13 @@ end
 # ============================================================================
 # S2 — COMPARATIVE ADVANTAGE (PRIVATE EDGE)
 # ============================================================================
-# G1 redesign (2026-06-09, approved): the edge is RELATIVE within the agent's
-# current choice set. The original form 1 + w·(edge − 0.5) anchored on an
-# absolute 0.5 "neutral" center that the edge formula could not reach (max
-# achievable 0.465, typical 0.21–0.35), so EVERY opportunity took a sub-1
-# multiplier — a flat invest-propensity suppression confounding the re-ranking
-# treatment in every S2/composite cell. The fix centers the multiplier on the
-# choice-set mean edge: mean multiplier ≡ 1 per choice set BY CONSTRUCTION
-# (whenever the [0.25, 2.0] inspectability clamp does not bind, which at the
-# default weight requires deviations beyond ±0.75 — impossible for edges in
-# [0,1] unless the weight is raised above 1.5), so only the RANKING signal
-# survives. The agent-constant trait term (competence/analytical_ability) is
-# dropped: per-agent constants cannot re-rank a choice set; they only shifted
-# the level of every multiplier (and partially double-counted channels the
-# traits already act through — the base score's uncertainty_tolerance scaling
-# and confidence sizing).
+# The edge is relative within the agent's current choice set. Centering the
+# multiplier on the choice-set mean gives mean multiplier ≡ 1 per choice set
+# by construction whenever the [0.25, 2.0] inspectability clamp does not bind.
+# At the default weight the clamp requires deviations beyond ±0.75, so only
+# the ranking signal normally survives. The agent-constant trait term
+# (competence/analytical_ability) is
+# omitted because per-agent constants cannot re-rank a choice set.
 
 # Knowledge-component overlap mirrors the production perception pattern
 # (uncertainty.jl ~1916): when the opportunity type carries a
@@ -229,7 +220,7 @@ end
 # |components|. The base Opportunity struct has NO components field, so the
 # EXPLICIT production fallback is sector familiarity (same fallback production
 # perception uses). The agent-knowledge Set is built lazily INSIDE the
-# hasfield branch (G1 latent-trap fix): production never pays the allocation,
+# hasfield branch: production never pays the allocation,
 # and the caller passes the knowledge dict itself rather than pre-building a
 # Set of sector names that would silently mis-intersect component IDs. An
 # extended opportunity type using this branch must share its component-ID
@@ -264,10 +255,10 @@ Per-opportunity self-observable founder–market-fit edge in [0,1] (design doc
 S2, G1 form): the knowledge-component overlap when the opportunity type
 carries the field, else sector familiarity (the base Opportunity path).
 
-Agent-constant traits are deliberately EXCLUDED (G1 fix, 2026-06-09): they
+Agent-constant traits are deliberately excluded: they
 cannot re-rank a within-agent choice set and only added level noise plus a
 partial double-count of the channels the traits already act through (base
-score, confidence). Documented in the strategy-ladder design notes.
+score, confidence).
 """
 function private_edge(
     opp,
@@ -304,8 +295,8 @@ end
     strategy_edge_context(config, sector_knowledge, opportunities)
         -> Union{StrategyEdgeContext,Nothing}
 
-First pass of the two-pass S2 hook (G1 fix): compute EVERY candidate's private
-edge, then the multiplier centers each candidate on the choice-set mean —
+First pass of the two-pass S2 hook: compute every candidate's private edge,
+then the multiplier centers each candidate on the choice-set mean —
 multiplier_i = 1 + STRATEGY_EDGE_WEIGHT × (edge_i − mean_j edge_j) — so the
 mean multiplier over the choice set is ≡ 1 by construction (no level
 confound), while the founder-market-fit RANKING signal is preserved.
@@ -315,11 +306,11 @@ candidate set is empty (the multiplier then applies no S2 term). Deterministic
 and observable-only: reads the agent's own sector knowledge and the same
 opportunity opacity inputs production scoring already uses; consumes no RNG.
 
-NOTE (documented double-dip resolution): `evaluate_opportunity_basic` already
+Note: `evaluate_opportunity_basic` already
 applies ×(1 + 0.5·fam) to the same score. With within-set centering the S2
 term adds a GRADIENT on top of that base gradient — an intentional, dialable
 steepening of the founder-market-fit slope (dial: STRATEGY_EDGE_WEIGHT), not
-a hidden level artifact. See the strategy-ladder design notes.
+a hidden level artifact.
 """
 function strategy_edge_context(
     config::EmergentConfig,

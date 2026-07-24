@@ -6,15 +6,8 @@ tier (none/basic/advanced/premium), locked for the whole run
 (AGENT_AI_MODE="fixed" + agent.fixed_ai_level). Emergent adoption is a
 robustness design only.
 
-v3.5.21: extracted from run_robustness_suite.jl (following the
-_safe_stats.jl shared-include pattern) so the suite and the six sibling
-mixed-tier drivers all share one regression-pinned implementation.
-Previously each driver carried a byte-similar private copy named
-`create_tier_assignments` plus an inline tier-override loop; those copies
-were verified algorithmically identical before consolidation
-(2026-06-09, see the design notes).
-
-Regression coverage: test/test_fixed_tier_assignment.jl.
+The suite and sibling mixed-tier drivers all share this implementation so the
+assignment rule and subscription handling stay identical across analyses.
 """
 
 using Random
@@ -57,12 +50,10 @@ subscription hygiene.
 
 The constructor samples tiers from `initial_tier_distribution` and starts a
 subscription schedule for each agent's originally-sampled tier. Setting
-`fixed_ai_level` without resetting subscriptions corrupts billing — the
-documented v2.9 bug where an agent pays for tier X while using tier Y. So
-for every agent we (1) set both `fixed_ai_level` and `current_ai_level` to
-the assigned tier, (2) cancel ALL existing subscription schedules, and
-(3) ensure a schedule for the new tier (a no-op for tiers without
-subscription pricing, e.g. "none" and per-use "basic").
+`fixed_ai_level` and subscription schedules must be updated together. For every
+agent we (1) set both `fixed_ai_level` and `current_ai_level` to the assigned
+tier, (2) cancel all existing subscription schedules, and (3) ensure a schedule
+for the new tier when that tier uses subscription pricing.
 """
 function apply_balanced_fixed_tiers!(sim::EmergentSimulation, assignments::Vector{String})
     for (i, agent) in enumerate(sim.agents)

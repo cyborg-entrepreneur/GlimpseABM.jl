@@ -1,7 +1,5 @@
-# Diagnostic invariant tests — designed to catch the data-flow / semantic
-# bugs that static inspection couldn't see. Each test sets up a small,
-# targeted scenario and asserts a numeric invariant that would have failed
-# under one of the v2/v2.1/v2.2/v2.3-era bugs.
+# Diagnostic invariant tests. Each test sets up a small, targeted scenario and
+# asserts a numeric invariant for a production mechanism.
 #
 # These are NOT smoke tests ("does it crash?"). Each assertion encodes
 # "the mechanism produced the value it should produce."
@@ -356,9 +354,8 @@ end
     # 4. Frontier AI subscription billing matches monthly cost per round
     # ------------------------------------------------------------------
     @testset "frontier AI subscription bills full monthly cost per round" begin
-        # Pins the subscription backend explicitly: this test is ABOUT seat-fee
-        # billing, which only exists under hybrid/fixed (token-core migration
-        # 2026-06-11 made "token" the struct default, with no subscriptions).
+        # Pins the subscription backend explicitly: this test is about seat-fee
+        # billing, which only exists under hybrid/fixed pricing.
         cfg = EmergentConfig(N_AGENTS=1, N_ROUNDS=1, RANDOM_SEED=42,
                              AGENT_AI_MODE="fixed", AI_COST_MODEL="hybrid")
         agent = EmergentAgent(1, cfg;
@@ -407,9 +404,7 @@ end
         for _ in 1:100
             GlimpseABM.update_opportunity_competition!(market, opp, 0.05)
         end
-        # With per-investment decay removed, competition should be far above
-        # the ~0.7 cap that v2.2 hit. Pre-fix value was capped at 0.7;
-        # post-fix should be ≥ 1.0.
+        # Concentrated repeated investment should push competition above 1.0.
         @test opp.competition >= 1.0
     end
 
@@ -428,6 +423,22 @@ end
         # And third
         GlimpseABM.initialize!(cfg)
         @test cfg.OPPORTUNITY_BASE_CAPACITY == cap_after_first
+    end
+
+    @testset "below-reference scaling preserves per-opportunity I/K units" begin
+        reference = EmergentConfig(N_AGENTS=1000, RANDOM_SEED=42)
+        half_population = EmergentConfig(N_AGENTS=500, RANDOM_SEED=42)
+        GlimpseABM.initialize!(reference)
+        GlimpseABM.initialize!(half_population)
+
+        # Below the reference size, opportunity count scales per capita. Total
+        # capital and opportunity count therefore fall together, leaving flow
+        # per opportunity unchanged; productive capacity must stay in the same
+        # dollar units rather than receive an additional sqrt(N) reduction.
+        @test GlimpseABM.get_scaled_opportunities(half_population, 500) ==
+            GlimpseABM.get_scaled_opportunities(reference, 1000) ÷ 2
+        @test half_population.OPPORTUNITY_BASE_CAPACITY ==
+            reference.OPPORTUNITY_BASE_CAPACITY
     end
 
     # ------------------------------------------------------------------
@@ -474,9 +485,6 @@ end
         end
     end
 
-    # (Former testset 11 covered update_lifecycle! stage transitions; the
-    # staged opportunity lifecycle was excised as unreachable.)
-
     # ------------------------------------------------------------------
     # 12. Niche / spawn opportunity is visible to its creator (via override)
     # ------------------------------------------------------------------
@@ -493,7 +501,8 @@ end
             search_effort=1.2,
             niche_creation_evidence=0.30,
         )
-        # v2.7: discovered starts false; creator sees via created_by override.
+        # Created opportunities start undiscovered publicly; the creator sees
+        # them through the created_by override.
         @test niche_opp.discovered == false
         @test niche_opp.created_by == 1
         @test niche_opp.novelty_score > 0.50
@@ -609,10 +618,18 @@ end
         @test isapprox(spawned.novelty_score, 0.80; atol=1e-12)
         @test spawned.combination_uncertainty > 0.50
         @test spawned.required_discovery_threshold > 0.0
+        flow_counts = GlimpseABM.opportunity_flow_counts(market)
+        @test flow_counts["innovation_opportunities_spawned_total"] == 1.0
     end
 
     @testset "simulation niche creation action carries ontology context" begin
-        cfg = EmergentConfig(N_AGENTS=2, RANDOM_SEED=44)
+        cfg = EmergentConfig(
+            N_AGENTS=2,
+            RANDOM_SEED=44,
+            NICHE_OPPORTUNITIES_PER_DISCOVERY_MIN=2,
+            NICHE_OPPORTUNITIES_PER_DISCOVERY_MAX=2,
+            ENABLE_BACKGROUND_OPPORTUNITY_REPLENISHMENT=false,
+        )
         sim = EmergentSimulation(config=cfg, seed=44, run_id="niche_context_probe")
         action = Dict{String,Any}(
             "action" => "explore",
@@ -628,7 +645,7 @@ end
         ids = GlimpseABM._create_niche_opportunities_from_action!(sim, action, 7)
         created = [sim.market.opportunity_map[id] for id in ids]
 
-        @test !isempty(ids)
+        @test length(ids) == 2
         @test action["new_opportunity_id"] == first(ids)
         @test action["new_opportunity_ids"] == ids
         @test all(opp -> opp.discovered == false, created)
@@ -640,6 +657,97 @@ end
         @test all(opp -> opp.required_discovery_threshold > 0.0, created)
         @test all(opp -> opp.combination_signature == "niche:tech:specialized", created)
         @test all(opp -> opp.component_scarcity > 0.55, created)
+
+        flow_counts = GlimpseABM.opportunity_flow_counts(sim.market)
+        @test flow_counts["exploration_opportunities_created_total"] == 2.0
+        @test flow_counts["opportunity_stock_flow_residual"] == 0.0
+
+        # A private niche leaves a durable publicization event when observable
+        # market traces diffuse it. Repeated management calls use the real
+        # lifecycle path; high traces make publication deterministic for this
+        # fixed seed without directly mutating the event ledger.
+        focal = first(created)
+        focal.total_invested = 100.0 * focal.capacity
+        focal.competition = 100.0
+        focal.market_impact = 100.0
+        last_round = 7
+        for r in 8:40
+            last_round = r
+            GlimpseABM.manage_opportunities!(
+                sim.market,
+                r,
+                Dict(focal.id => 100),
+                0.0,
+            )
+            focal.discovered && break
+        end
+        @test focal.discovered
+        @test GlimpseABM.opportunity_flow_counts(sim.market)[
+            "opportunities_publicized_total"] >= 1.0
+
+        # Culling removes the live object but not its flow history.
+        focal.total_invested = 0.0
+        focal.competition = 0.0
+        focal.age = 21
+        GlimpseABM.manage_opportunities!(
+            sim.market,
+            last_round + 1,
+            Dict{String,Int}(),
+            0.0,
+        )
+        @test !haskey(sim.market.opportunity_map, focal.id)
+        @test GlimpseABM.opportunity_flow_counts(sim.market)[
+            "opportunities_culled_total"] >= 1.0
+        @test GlimpseABM.opportunity_flow_counts(sim.market)[
+            "opportunity_stock_flow_residual"] == 0.0
+    end
+
+    @testset "opportunity ids avoid durable flow-ledger collisions" begin
+        cfg = EmergentConfig(N_AGENTS=2, RANDOM_SEED=47)
+        market = MarketEnvironment(cfg; rng=MersenneTwister(47))
+        seed = 20260710
+        prefix = "niche_retail_budget_44"
+        collision_suffix = rand(MersenneTwister(seed), 1000:9999)
+        collision_id = "$(prefix)_$(collision_suffix)"
+        push!(market.opportunity_flow_events, GlimpseABM.OpportunityFlowEvent(
+            44,
+            "created",
+            "exploration",
+            collision_id,
+            1,
+            nothing,
+            "retail_budget",
+            "forced_collision_probe",
+            1.0,
+            0.0,
+        ))
+
+        market.rng = MersenneTwister(seed)
+        generated_id = GlimpseABM._unique_opportunity_id(market, prefix)
+
+        @test generated_id != collision_id
+        @test !any(
+            event -> event.event_type == "created" &&
+                event.opportunity_id == generated_id,
+            market.opportunity_flow_events,
+        )
+    end
+
+    @testset "background replenishment can be isolated from endogenous creation" begin
+        cfg = EmergentConfig(
+            N_AGENTS=2,
+            RANDOM_SEED=46,
+            ENABLE_BACKGROUND_OPPORTUNITY_REPLENISHMENT=false,
+        )
+        market = MarketEnvironment(cfg; rng=MersenneTwister(46))
+        empty!(market.opportunities)
+        empty!(market.opportunity_map)
+        empty!(market.opportunities_by_sector)
+
+        GlimpseABM.manage_opportunities!(market, 1, Dict{String,Int}(), 0.0)
+
+        @test isempty(market.opportunities)
+        @test market.new_ventures_by_round[end] == 0
     end
 
     @testset "niche taxonomy emerges and reaches market creation" begin

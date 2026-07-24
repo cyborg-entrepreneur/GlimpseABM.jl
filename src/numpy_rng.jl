@@ -7,7 +7,7 @@ to Julia's native `MersenneTwister` (which produces a different stream from the
 same seed). Production runs use the Julia native RNG (`USE_NUMPY_RNG = false`);
 this module exists only as an optional, partially NumPy-compatible stream.
 
-PARITY SCOPE (verified empirically against `np.random.RandomState`, 2026-06-09).
+PARITY SCOPE.
 This module provides PARTIAL sampler-level parity with NumPy's `RandomState` —
 a verified subset of samplers matches bit-for-bit; others do not. NO
 stream-level parity claim is made: a full simulation run does NOT reproduce a

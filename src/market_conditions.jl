@@ -1,9 +1,8 @@
 """
 Typed market-state payload consumed by agent decisions, `realized_return`,
 and the uncertainty layer. A typed struct (rather than a `Dict{String,Any}`)
-closes the silent-zero-dataflow bug class at module boundaries: every field
-is guaranteed present and typed, so a misspelled key fails at field-access
-time rather than silently returning a default. Producer is
+guarantees every field is present and typed, so a misspelled key fails at
+field-access time rather than silently returning a default. Producer is
 `market.jl:get_market_conditions`.
 
 The `extras::Dict{String,Any}` escape hatch holds one-off experimental

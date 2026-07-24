@@ -481,7 +481,7 @@ function profile_simulation(
     mkpath(output_dir)
     println("Profiling simulation with $(config.N_AGENTS) agents, $(config.N_ROUNDS) rounds...")
 
-    # Clear any previous profile data
+    # Clear profile samples before this run.
     Profile = Base.require(Base.PkgId(Base.UUID("9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"), "Profile"))
 
     try
@@ -539,7 +539,7 @@ const AI_LABEL_MAP = Dict{String,String}(
     "premium" => "premium",
     "frontier" => "premium",
     "frontier_ai" => "premium",
-    # Legacy input alias retained so older scripts/configs still load.
+    # Compatibility input alias.
     "premium_ai" => "premium",
     "full" => "premium"
 )

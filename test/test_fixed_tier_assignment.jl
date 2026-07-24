@@ -1,12 +1,10 @@
 """
-Regression tests for the shared fixed-tier assignment helpers
+Tests for the shared fixed-tier assignment helpers
 (scripts/_fixed_tier_assignment.jl).
 
 These pin the PRIMARY paper design: mixed fixed-tier, N=1000 -> exactly
-250 agents per tier, locked for the run. The helpers were consolidated
-from byte-similar private copies in seven mixed-tier drivers on
-2026-06-09; this file is the regression pin for the single-sourced
-implementation.
+250 agents per tier, locked for the run. This file pins the single shared
+implementation used by the mixed-tier drivers.
 
 Wrapped in a module so the shared file's `const AI_TIERS` and helper
 function definitions stay isolated from other test files in Main.
@@ -58,10 +56,9 @@ tier_counts(assignments) = Dict(t => count(==(t), assignments) for t in AI_TIERS
     @testset "apply_balanced_fixed_tiers! on a real simulation" begin
         n_agents = 24
         seed = 4242
-        # AI_COST_MODEL pinned to "hybrid": the subscription-hygiene guard
+        # AI_COST_MODEL pinned to "hybrid": the subscription-state check
         # below is ABOUT seat-fee schedules, which only exist under the
-        # hybrid/fixed backends (token-core migration 2026-06-11 made "token"
-        # the struct default). The token-default case is asserted separately
+        # hybrid/fixed backends. The token-default case is asserted separately
         # at the end of this testset.
         config = EmergentConfig(
             N_AGENTS=n_agents,
@@ -92,8 +89,8 @@ tier_counts(assignments) = Dict(t => count(==(t), assignments) for t in AI_TIERS
             @test agent.fixed_ai_level == assigned
             @test agent.current_ai_level == assigned
 
-            # Subscription hygiene (v2.9 billing bug guard): no agent may
-            # hold a schedule for any tier other than its assignment.
+            # No agent may hold a subscription schedule for any tier other
+            # than its assignment.
             scheduled = collect(keys(agent.subscription_accounts))
             @test all(t -> t == assigned, scheduled)
 

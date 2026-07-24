@@ -39,6 +39,16 @@ function write_run_provenance!(
     push!(rows, "git_commit" => _safe_cmd_output(`git -C $(LAUNCH_METADATA_REPO_ROOT) rev-parse HEAD`))
     push!(rows, "git_branch" => _safe_cmd_output(`git -C $(LAUNCH_METADATA_REPO_ROOT) rev-parse --abbrev-ref HEAD`))
     push!(rows, "git_dirty" => (_safe_cmd_output(`git -C $(LAUNCH_METADATA_REPO_ROOT) status --short`) == "" ? "false" : "true"))
+    # ARC may regenerate Manifest.toml for its pinned Julia module. Preserve
+    # whole-tree dirtiness above, but expose a separate production-code gate
+    # that ignores that legitimate environment-only mutation.
+    push!(
+        rows,
+        "git_code_dirty" =>
+            (_safe_cmd_output(
+                `git -C $(LAUNCH_METADATA_REPO_ROOT) status --short -- src scripts test arc Project.toml`,
+            ) == "" ? "false" : "true"),
+    )
     push!(
         rows,
         "tier_label_semantics" =>

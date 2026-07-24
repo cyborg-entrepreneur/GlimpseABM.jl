@@ -14,6 +14,46 @@ using Distributions
 # ============================================================================
 
 """
+Append-only record of an opportunity entering, becoming public, or leaving the
+market. The ledger survives opportunity culling, so open-futures supply metrics
+refer to the complete run rather than only the end-of-run survivor stock.
+"""
+struct OpportunityFlowEvent
+    round::Int
+    event_type::String
+    source::String
+    opportunity_id::String
+    creator_id::Union{Int,Nothing}
+    origin_innovation_id::Union{String,Nothing}
+    sector::String
+    reason::String
+    capacity::Float64
+    outstanding_capital::Float64
+end
+
+"""
+Append-only decision-time capital commitment. `sequence` is local to an
+opportunity and preserves within-round ordering, allowing later same-round
+commitments to count as unobserved post-commitment rival capital.
+"""
+struct OpportunityCommitmentEvent
+    sequence::Int
+    round::Int
+    opportunity_id::String
+    agent_id::Int
+    tier::String
+    amount::Float64
+    capacity::Float64
+    outstanding_after::Float64
+    entry_investment_capacity_ratio::Float64
+    latent_return_potential::Float64
+    instrument_estimated_return::Float64
+    decision_estimated_return::Float64
+    is_created::Bool
+    self_created::Bool
+end
+
+"""
 Dynamic market with emergent properties and realistic return dynamics.
 
 This struct manages the market context in which entrepreneurial agents
@@ -49,6 +89,9 @@ mutable struct MarketEnvironment
     sector_demand_adjustments::Dict{String,Dict{String,Float64}}
     branch_params::Dict{String,Dict{String,Any}}
     crowding_metrics::Dict{String,Float64}
+    opportunity_tier_invested::Dict{String,Dict{String,Float64}}
+    opportunity_flow_events::Vector{OpportunityFlowEvent}
+    opportunity_commitment_events::Dict{String,Vector{OpportunityCommitmentEvent}}
     rng::AbstractRNG
 end
 
@@ -87,6 +130,9 @@ function MarketEnvironment(
         Dict{String,Dict{String,Float64}}(),
         Dict{String,Dict{String,Any}}(),
         Dict{String,Float64}(),
+        Dict{String,Dict{String,Float64}}(),
+        OpportunityFlowEvent[],
+        Dict{String,Vector{OpportunityCommitmentEvent}}(),
         rng
     )
 
@@ -99,6 +145,236 @@ function MarketEnvironment(
     _initialize_opportunities!(market)
 
     return market
+end
+
+function _opportunity_source(opp::Opportunity)::String
+    if !isnothing(opp.origin_innovation_id) || startswith(opp.id, "spawn_")
+        return "innovation"
+    elseif startswith(opp.id, "niche_")
+        return "exploration"
+    elseif startswith(opp.id, "market_")
+        return "background"
+    elseif startswith(opp.id, "initial_")
+        return "initial"
+    elseif !isnothing(opp.created_by)
+        return "founder_other"
+    end
+    return "unknown"
+end
+
+function _opportunity_id_seen(market::MarketEnvironment, opportunity_id::String)::Bool
+    haskey(market.opportunity_map, opportunity_id) && return true
+    any(opp -> opp.id == opportunity_id, market.opportunities) && return true
+    return any(
+        event -> event.event_type == "created" && event.opportunity_id == opportunity_id,
+        market.opportunity_flow_events,
+    )
+end
+
+function _unique_opportunity_id(
+    market::MarketEnvironment,
+    prefix::String;
+    suffix_range = 1000:9999,
+)::String
+    for _ in 1:100_000
+        candidate = "$(prefix)_$(rand(market.rng, suffix_range))"
+        _opportunity_id_seen(market, candidate) || return candidate
+    end
+
+    # Pathological fallback: preserve uniqueness without depending on a finite
+    # random suffix space. The loop is retained in case prior runs already used
+    # the deterministic fallback prefix.
+    suffix = length(market.opportunity_flow_events) + length(market.opportunities) + 1
+    while true
+        candidate = "$(prefix)_$(suffix)"
+        _opportunity_id_seen(market, candidate) || return candidate
+        suffix += 1
+    end
+end
+
+function _record_opportunity_flow_event!(
+    market::MarketEnvironment,
+    opp::Opportunity,
+    event_type::String;
+    round::Int=market.current_round,
+    source::String=_opportunity_source(opp),
+    reason::String="",
+)::Nothing
+    push!(market.opportunity_flow_events, OpportunityFlowEvent(
+        round,
+        event_type,
+        source,
+        opp.id,
+        opp.created_by,
+        opp.origin_innovation_id,
+        something(opp.sector, "unsectored"),
+        reason,
+        Float64(opp.capacity),
+        Float64(opp.total_invested),
+    ))
+    return nothing
+end
+
+function record_opportunity_commitment!(
+    market::MarketEnvironment,
+    opp::Opportunity,
+    agent_id::Int,
+    tier::String,
+    amount::Float64,
+    round::Int;
+    instrument_estimated_return::Float64=NaN,
+    decision_estimated_return::Float64=NaN,
+)::Int
+    events = get!(
+        market.opportunity_commitment_events,
+        opp.id,
+        OpportunityCommitmentEvent[],
+    )
+    sequence = length(events) + 1
+    capacity = Float64(opp.capacity)
+    entry_ratio = capacity > 0.0 ? Float64(opp.total_invested) / capacity : NaN
+    is_created = startswith(opp.id, "niche_") || startswith(opp.id, "spawn_") ||
+        !isnothing(opp.origin_innovation_id)
+    self_created = is_created && !isnothing(opp.created_by) && opp.created_by == agent_id
+    event = OpportunityCommitmentEvent(
+        sequence,
+        round,
+        opp.id,
+        agent_id,
+        tier,
+        amount,
+        capacity,
+        Float64(opp.total_invested),
+        entry_ratio,
+        Float64(opp.latent_return_potential),
+        instrument_estimated_return,
+        decision_estimated_return,
+        is_created,
+        self_created,
+    )
+    push!(events, event)
+    push!(opp.capital_history, amount)
+    return sequence
+end
+
+function post_commitment_rival_capital(
+    market::MarketEnvironment,
+    opportunity_id::String,
+    entry_sequence::Int,
+    focal_agent_id::Int,
+)::Float64
+    events = get(
+        market.opportunity_commitment_events,
+        opportunity_id,
+        OpportunityCommitmentEvent[],
+    )
+    entry_sequence >= length(events) && return 0.0
+    return sum(
+        event.amount for event in @view(events[(entry_sequence + 1):end])
+        if event.agent_id != focal_agent_id;
+        init=0.0,
+    )
+end
+
+function opportunity_flow_counts(market::MarketEnvironment)::Dict{String,Float64}
+    counts = Dict{String,Float64}(
+        "initial_opportunities_created_total" => 0.0,
+        "exploration_opportunities_created_total" => 0.0,
+        "innovation_opportunities_spawned_total" => 0.0,
+        "background_opportunities_created_total" => 0.0,
+        "other_opportunities_created_total" => 0.0,
+        "opportunities_publicized_total" => 0.0,
+        "opportunities_culled_total" => 0.0,
+    )
+    source_keys = Dict(
+        "initial" => "initial_opportunities_created_total",
+        "exploration" => "exploration_opportunities_created_total",
+        "innovation" => "innovation_opportunities_spawned_total",
+        "background" => "background_opportunities_created_total",
+    )
+    for event in market.opportunity_flow_events
+        if event.event_type == "created"
+            key = get(source_keys, event.source, "other_opportunities_created_total")
+            counts[key] += 1.0
+        elseif event.event_type == "publicized"
+            counts["opportunities_publicized_total"] += 1.0
+        elseif event.event_type == "culled"
+            counts["opportunities_culled_total"] += 1.0
+        end
+    end
+    counts["opportunities_created_total"] = sum(
+        counts[key] for key in values(source_keys);
+        init=counts["other_opportunities_created_total"],
+    )
+    counts["opportunity_ending_stock"] = Float64(length(market.opportunities))
+    counts["opportunity_stock_flow_residual"] =
+        counts["opportunities_created_total"] -
+        counts["opportunities_culled_total"] -
+        counts["opportunity_ending_stock"]
+    counts["opportunity_commitments_total"] = Float64(sum(
+        length(events) for events in values(market.opportunity_commitment_events);
+        init=0,
+    ))
+    return counts
+end
+
+function record_opportunity_tier_investment!(
+    market::MarketEnvironment,
+    opp_id::AbstractString,
+    tier::AbstractString,
+    amount::Real,
+)::Nothing
+    invested = max(0.0, Float64(amount))
+    invested <= 0.0 && return nothing
+    tier_map = get!(market.opportunity_tier_invested, String(opp_id),
+                    Dict{String,Float64}())
+    tier_key = String(tier)
+    tier_map[tier_key] = max(0.0, get(tier_map, tier_key, 0.0) + invested)
+    return nothing
+end
+
+function release_opportunity_tier_investment!(
+    market::MarketEnvironment,
+    opp_id::AbstractString,
+    tier::AbstractString,
+    amount::Real,
+)::Nothing
+    tier_map = get(market.opportunity_tier_invested, String(opp_id), nothing)
+    isnothing(tier_map) && return nothing
+    tier_key = String(tier)
+    current = get(tier_map, tier_key, 0.0)
+    tier_map[tier_key] = max(0.0, current - max(0.0, Float64(amount)))
+    if all(v <= 1e-9 for v in values(tier_map))
+        delete!(market.opportunity_tier_invested, String(opp_id))
+    end
+    return nothing
+end
+
+function opportunity_tier_investment(
+    market::MarketEnvironment,
+    opp_id::AbstractString,
+    tier::AbstractString,
+)::Float64
+    tier_map = get(market.opportunity_tier_invested, String(opp_id), nothing)
+    isnothing(tier_map) && return 0.0
+    return max(0.0, Float64(get(tier_map, String(tier), 0.0)))
+end
+
+function opportunity_weak_exposure(
+    market::MarketEnvironment,
+    opp::Opportunity,
+    weak_tiers::Vector{String},
+)::Float64
+    tier_map = get(market.opportunity_tier_invested, opp.id, nothing)
+    isnothing(tier_map) && return 0.0
+    weak_capital = sum(max(0.0, Float64(get(tier_map, tier, 0.0))) for tier in weak_tiers)
+    weak_capital <= 0.0 && return 0.0
+    total_capital = sum(max(0.0, Float64(v)) for v in values(tier_map))
+    total_capital <= 0.0 && return 0.0
+    weak_share = weak_capital / total_capital
+    capacity = hasfield(typeof(opp), :capacity) ? max(Float64(opp.capacity), 1.0) : 1.0
+    weak_saturation = 1.0 - exp(-weak_capital / capacity)
+    return clamp(weak_share * weak_saturation, 0.0, 1.0)
 end
 
 """
@@ -233,6 +509,14 @@ function _initialize_opportunities!(market::MarketEnvironment)
             market.opportunities_by_sector[sector] = Opportunity[]
         end
         push!(market.opportunities_by_sector[sector], opp)
+        _record_opportunity_flow_event!(
+            market,
+            opp,
+            "created";
+            round=0,
+            source="initial",
+            reason="initial_public_stock",
+        )
     end
 end
 
@@ -247,14 +531,9 @@ function step!(
     matured_outcomes::Vector{Dict{String,Any}} = Dict{String,Any}[]
 )::MarketConditions
     market.current_round = round
-    # Do NOT clear market.sector_demand_adjustments here. realized_return reads
-    # them from market_conditions during Phase 4 (process_matured_investments!),
-    # which runs BEFORE market.step! this round, so clearing here would leave
-    # the dict empty for every matured investment. The adjustments are a
-    # one-round-stale cache: populated during Phase 5.5 (update_clearing_metrics!)
-    # from this round's flow + clearing data, then read on the NEXT round's
-    # Phase 4. One month of staleness is acceptable for a monthly sim, since
-    # market-wide demand state doesn't fluctuate that fast.
+    # Demand adjustments are lagged by one round. realized_return reads them
+    # from market_conditions during Phase 4 before market.step! runs, so the
+    # cache is populated during Phase 5.5 and read on the next round's Phase 4.
 
     # Record innovations
     append!(market.innovations, innovations)
@@ -368,7 +647,7 @@ function get_market_conditions(market::MarketEnvironment;
     # Copy dict fields so MarketConditions is a true snapshot. The struct is
     # immutable but its Dict contents are not: storing the market's live dicts
     # by reference would let a later round's update to `tier_invest_share` or
-    # `sector_demand_adjustments` silently leak into MarketConditions instances
+    # `sector_demand_adjustments` propagate into MarketConditions instances
     # already handed out. Shallow copies suffice for Dict{String,Float64};
     # sector_demand_adjustments is nested, so it needs deepcopy.
     return MarketConditions(
@@ -406,12 +685,20 @@ function add_opportunity!(market::MarketEnvironment, opp::Opportunity)
     push!(market.opportunities, opp)
     market.opportunity_map[opp.id] = opp
 
+    result = nothing
     if !isnothing(opp.sector)
         if !haskey(market.opportunities_by_sector, opp.sector)
             market.opportunities_by_sector[opp.sector] = Opportunity[]
         end
-        push!(market.opportunities_by_sector[opp.sector], opp)
+        result = push!(market.opportunities_by_sector[opp.sector], opp)
     end
+    _record_opportunity_flow_event!(
+        market,
+        opp,
+        "created";
+        reason="add_opportunity_api",
+    )
+    return result
 end
 
 # ============================================================================
@@ -508,10 +795,7 @@ function opportunity_signal_strength(opp::Opportunity)::Float64
     impact_trace = 1.0 - exp(-max(0.0, Float64(opp.market_impact)) / 3.0)
     market_trace = 0.45 * invested_trace + 0.35 * competition_trace + 0.20 * impact_trace
 
-    # Constant lifecycle term pinned at the "emerging" value (0.30): the staged
-    # opportunity lifecycle was excised as unreachable — every opportunity
-    # stayed "emerging" in practice, so this
-    # term always contributed 0.15 * 0.30.
+    # Constant lifecycle term pinned at the "emerging" value (0.30).
     lifecycle_signal = 0.30
 
     signal = 0.60 * intrinsic_legibility + 0.25 * market_trace + 0.15 * lifecycle_signal
@@ -851,10 +1135,6 @@ function update_market_dynamics!(
         0.2 * (investment_activity + quality_adjustment + ai_activity * 0.1)
 
     # Black swan probability: base rate modulated by AI investment share.
-    # The former boom-streak escalation (BOOM_TAIL_UNCERTAINTY_EXPONENT) was
-    # excised because its investment_activity
-    # normalizer ($250K/agent/round) was unreachable under bet-sizing caps,
-    # so boom_streak was identically 0 and the exponent never applied.
     base_prob = market.config.BLACK_SWAN_PROBABILITY
     dynamic_black_swan = base_prob * (1 + ai_invest_share * 0.3)
 
@@ -908,15 +1188,6 @@ function update_macro_regime!(
             adjustments[idx_map["boom"]] += boost * 0.6
         end
     end
-
-    # NOTE: the former recession/crisis drag
-    # branch (`invest < 0.9 || momentum < -0.6`) was excised. Its
-    # investment_activity normalizer ($250K/agent/round) was unreachable under
-    # bet-sizing caps (realistic values 0.1-0.3), so the branch fired EVERY
-    # round — a permanent, unintended downward regime tilt layered on top of
-    # the NBER-calibrated transition matrix. Removing it is behavior-changing:
-    # regime conditions are slightly less recessionary on average; the
-    # recalibration pass absorbs the shift.
 
     # Crowding effects
     crowd_threshold = market.config.RETURN_DEMAND_CROWDING_THRESHOLD
@@ -999,11 +1270,16 @@ function manage_opportunities!(
     # Target opportunity count scaled to agent count.
     target_cap = get_scaled_opportunities(market.config, market.n_agents)
 
-    # Calculate desired new opportunities
+    # Calculate desired BACKGROUND opportunities. Founder-created niches and
+    # innovation spawns are produced on their own action paths and remain live
+    # when this background process is disabled.
     discovered_count = count(o -> o.discovered, market.opportunities)
     young_discovered = count(o -> o.discovered && o.age < 5, market.opportunities)
-    poisson_new = rand(market.rng, Poisson(max(0.0, discovered_count * 0.02)))
-    desired_new = max(0, target_cap - discovered_count + poisson_new - young_discovered)
+    desired_new = 0
+    if market.config.ENABLE_BACKGROUND_OPPORTUNITY_REPLENISHMENT
+        poisson_new = rand(market.rng, Poisson(max(0.0, discovered_count * 0.02)))
+        desired_new = max(0, target_cap - discovered_count + poisson_new - young_discovered)
+    end
     push!(market.new_ventures_by_round, desired_new)
 
     # Create new opportunities with sector balancing
@@ -1037,12 +1313,20 @@ function manage_opportunities!(
         end
 
         new_opp = _create_realistic_opportunity(
-            market, "market_$(round)_$(rand(market.rng, 1000:9999))", sector
+            market, _unique_opportunity_id(market, "market_$(round)"), sector
         )
         new_opp.discovery_round = round
         push!(market.opportunities, new_opp)
         market.opportunity_map[new_opp.id] = new_opp
         _index_opportunity!(market, new_opp)
+        _record_opportunity_flow_event!(
+            market,
+            new_opp,
+            "created";
+            round=round,
+            source="background",
+            reason="background_public_arrival",
+        )
     end
 
     # Private search does not broadcast opportunities. Public discovery emerges
@@ -1055,29 +1339,45 @@ function manage_opportunities!(
         if rand(market.rng) < diffusion_prob
             opp.discovered = true
             opp.discovery_round = round
+            _record_opportunity_flow_event!(
+                market,
+                opp,
+                "publicized";
+                round=round,
+                reason="market_trace_diffusion",
+            )
         end
     end
 
-    # Age all opportunities and decay competition. (The staged opportunity
-    # lifecycle that was once updated here was excised as
-    # unreachable.)
+    # Age all opportunities and decay competition.
     for opp in market.opportunities
         opp.age += 1
+        # Snapshot outstanding commitment for live opportunities. The simulation
+        # refreshes the wider realizable cohort after this lifecycle pass so
+        # culled opportunities retained by active investments obey the same lag.
+        # This runs at end-of-round (after Phase-2 realization), so next round's
+        # realization reads a genuine one-round-lagged commitment, distinct from
+        # the same-round I/K the crowding penalty uses. Written unconditionally
+        # but read only when PERFORMATIVE_DEMAND_ELASTICITY > 0, so baseline is
+        # byte-identical.
+        opp.committed_prev_round = opp.total_invested
         opp.competition = max(0.0, opp.competition * (1.0 - market.config.COMPETITION_DECAY_RATE))
     end
 
-    # Remove dead opportunities
-    dead_opps = Opportunity[]
+    # Remove inactive opportunities. When competition dynamics are disabled,
+    # skip the competition-based cull and rely on demand-age removal.
+    competition_cull_active = !market.config.DISABLE_COMPETITION_DYNAMICS
+    dead_opps = Tuple{Opportunity,String}[]
     for opp in market.opportunities
-        if opp.competition < 0.01 && opp.age > 20
-            push!(dead_opps, opp)
+        if competition_cull_active && opp.competition < 0.01 && opp.age > 20
+            push!(dead_opps, (opp, "low_competition"))
         elseif opp.age > 10 && get(opportunity_demand, opp.id, 0) == 0
-            push!(dead_opps, opp)
+            push!(dead_opps, (opp, "no_current_demand"))
         end
     end
 
-    for opp in dead_opps
-        _remove_opportunity!(market, opp)
+    for (opp, reason) in dead_opps
+        _remove_opportunity!(market, opp; round=round, reason=reason)
     end
 
     _rebuild_sector_index!(market)
@@ -1097,7 +1397,23 @@ end
 """
 Remove an opportunity from the market.
 """
-function _remove_opportunity!(market::MarketEnvironment, opp::Opportunity)
+function _remove_opportunity!(
+    market::MarketEnvironment,
+    opp::Opportunity;
+    round::Int=market.current_round,
+    reason::String="inactive",
+)
+    # Key the idempotency guard on the canonical vector, not the cache map: a
+    # stale/missing cache entry must not prevent the lifecycle path from
+    # removing an opportunity that is still live in the market.
+    any(candidate -> candidate.id == opp.id, market.opportunities) || return nothing
+    _record_opportunity_flow_event!(
+        market,
+        opp,
+        "culled";
+        round=round,
+        reason=reason,
+    )
     filter!(o -> o.id != opp.id, market.opportunities)
 
     # Remove from sector index
@@ -1108,6 +1424,7 @@ function _remove_opportunity!(market::MarketEnvironment, opp::Opportunity)
 
     # Remove from map
     delete!(market.opportunity_map, opp.id)
+    return nothing
 end
 
 """
@@ -1133,10 +1450,11 @@ function estimate_sector_capacity(market::MarketEnvironment)::Dict{String,Float6
     # capital the sector can soak up in one round before clearing pressure
     # drives returns down / failure up. This is deliberately NOT the same as
     # `opp.capacity` (used by realized_return's convexity penalty): opp.capacity
-    # is a per-opportunity *lifetime* absorption limit at the venture level,
-    # whereas this returns a per-sector *per-round* flow rate driving
-    # market-wide supply/demand dynamics. The two operate at different units
-    # (sector-round vs opp-lifetime) and are intentionally distinct — unifying
+    # is a per-opportunity outstanding-capital absorption stock, whereas this
+    # returns a per-sector *per-round* flow rate driving market-wide
+    # supply/demand dynamics. The two operate at different units
+    # (sector-round flow vs opportunity-level capital stock) and are
+    # intentionally distinct — unifying
     # them around opp.capacity produces systematically cold markets, because
     # opp count grows unboundedly as innovations spawn new opportunities. The
     # demand-adjustment clamp bounds any downstream over/undershoot regardless.
@@ -1159,10 +1477,8 @@ end
 Update clearing metrics from agent actions.
 """
 function update_clearing_metrics!(market::MarketEnvironment, agent_actions::Vector{Dict{String,Any}})
-    # Clear stale adjustments at ENTRY so the fresh recompute at the bottom of
-    # this function actually recomputes. get_demand_adjustments checks `haskey`
-    # first and returns cached values, so without this clear the adjustments
-    # would freeze at whatever was first computed.
+    # Clear cached adjustments at entry so the recompute at the bottom of this
+    # function is based on the current round's flows.
     empty!(market.sector_demand_adjustments)
 
     sector_flows = Dict{String,Float64}()
@@ -1213,7 +1529,7 @@ function update_clearing_metrics!(market::MarketEnvironment, agent_actions::Vect
     market.aggregate_clearing_ratio = total_demand / total_capacity
 
     # Update tier invest shares: rebuild from scratch each round so a tier with
-    # zero demand this round reads 0.0, not its stale share from a prior round.
+    # zero demand this round reads 0.0.
     # Writing only the tiers present in tier_flows would freeze every other
     # tier's share at its last non-zero value across a no-invest round.
     for tier in keys(market.tier_invest_share)
@@ -1340,9 +1656,8 @@ function get_perceived_opportunities(
     # discovery process rather than a deterministic global top-k oracle.
     raw_budget = (3.0 + info_breadth * 60.0) * (1.0 + info_quality)
 
-    # WEALTH_SCALED_COMPUTE robustness cell (robustness addendum, 2026-06-11):
-    # founders purchase analysis breadth in proportion to their resources —
-    # the rich-get-richer marginal-compute dynamic. The multiplier
+    # Wealth-scaled compute: founders purchase analysis breadth in proportion
+    # to their resources. The multiplier
     # clamp(capital/initial_equity, 0.25, 4.0)^scaling applies UNIFORMLY
     # across tiers (no tier-keyed term; the exact-equality counterfactual
     # discipline is preserved — any tier asymmetry in its effect must emerge
@@ -1487,14 +1802,14 @@ function create_niche_opportunity(
     # it twice for niche opps, whereas regular-path opps see it only at
     # realization.
     niche_opp = Opportunity(
-        id="niche_$(branch_name)_$(round_num)_$(rand(market.rng, 1000:9999))",
+        id=_unique_opportunity_id(market, "niche_$(branch_name)_$(round_num)"),
         latent_return_potential=clamp(latent_return, 0.5, market.config.RETURN_CLAMP_MAX),
         latent_failure_potential=clamp(latent_failure, 0.02, 0.95),
         complexity=rand(market.rng, Uniform(0.4, 0.8)),
         # discovered=false: creator-only visibility is handled in
         # get_opportunities_for_agent via a `created_by == agent.id` override.
-        # Setting discovered=true would leak the opp to every agent instantly,
-        # whereas the model assumes gradual AI-tier-aware discovery, not broadcast.
+        # Setting discovered=true would broadcast the opportunity to every agent
+        # instantly, whereas the model assumes gradual AI-tier-aware discovery.
         discovered=false,
         discovery_round=round_num,
         created_by=discoverer_id,
@@ -1514,6 +1829,14 @@ function create_niche_opportunity(
     push!(market.opportunities, niche_opp)
     market.opportunity_map[niche_opp.id] = niche_opp
     _index_opportunity!(market, niche_opp)
+    _record_opportunity_flow_event!(
+        market,
+        niche_opp,
+        "created";
+        round=round_num,
+        source="exploration",
+        reason="niche_discovery",
+    )
 
     return niche_opp
 end
@@ -1583,7 +1906,7 @@ function spawn_opportunity_from_innovation!(
     # into latent_return/latent_failure at construction would apply it twice
     # for spawned opps, whereas regular opps from _create_realistic_opportunity
     # see it only at realization.
-    opp_id = "spawn_$(innovation.id)_$(rand(market.rng, 1000:9999))"
+    opp_id = _unique_opportunity_id(market, "spawn_$(innovation.id)")
 
     # Novelty score inherited from innovation (novel opportunities are harder to evaluate)
     innov_novelty = clamp(something(innovation.novelty, 0.5), 0.0, 1.0)
@@ -1639,6 +1962,14 @@ function spawn_opportunity_from_innovation!(
     push!(market.opportunities, opportunity)
     market.opportunity_map[opportunity.id] = opportunity
     _index_opportunity!(market, opportunity)
+    _record_opportunity_flow_event!(
+        market,
+        opportunity,
+        "created";
+        round=innovation.round_created,
+        source="innovation",
+        reason="successful_innovation_spawn",
+    )
 
     return opportunity
 end
@@ -1675,9 +2006,22 @@ end
 Clear old opportunities that have been around too long with low competition.
 """
 function clear_old_opportunities!(market::MarketEnvironment, round::Int)
-    filter!(market.opportunities) do opp
-        age = round - opp.discovery_round
-        !(age > 80 && opp.competition < 0.05)
+    stale = Opportunity[]
+    for opp in market.opportunities
+        discovery_round = something(opp.discovery_round, 0)
+        age = round - discovery_round
+        if age > 80 && opp.competition < 0.05
+            push!(stale, opp)
+        end
+    end
+    for opp in stale
+        _remove_opportunity!(
+            market,
+            opp;
+            round=round,
+            reason="legacy_age_competition_cull",
+        )
     end
     _rebuild_sector_index!(market)
+    return nothing
 end

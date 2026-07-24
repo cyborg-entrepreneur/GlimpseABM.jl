@@ -1,6 +1,5 @@
-# Emergence audit extension tests (the strategy-ladder design notes,
-# emergence-audit extension): AI_ERROR_CORRELATION
-# (rho) + DECISION_TEMPERATURE (T).
+# Emergence mechanism tests: AI_ERROR_CORRELATION (rho) and
+# DECISION_TEMPERATURE (T).
 #
 # Battery (mirrors test_strategy_ladder.jl / test_open_action_space.jl):
 #   1. Config validation — rho outside [0,1] / T <= 0 error loudly at
@@ -8,16 +7,16 @@
 #   2. Default neutrality — rho=0 + T=1 explicit is bit-identical to the
 #      implicit default (fingerprint sim), and the rho=0 path consumes NO
 #      common draws (common_error_cache stays empty over a full sim).
-#   3. Variance preservation — the per-agent estimate-error variance is
+#   3. P9 variance preservation — the per-agent estimate-error variance is
 #      ~1 at rho=0 AND rho=1 (the variance-preserving blend), while the
 #      cross-agent error correlation flips ~0 -> ~1; constructed directly on
 #      get_information outputs for two agents, same opp/round.
-#   4. Accuracy invariance — mean |estimated_return - latent| unchanged
+#   4. P9 accuracy invariance — mean |estimated_return - latent| unchanged
 #      in rho (the entire point of the dial).
-#   5. Cache semantics — one common draw per (opp, tier) per round,
+#   5. P9 cache semantics — one common draw per (opp, tier) per round,
 #      shared across same-tier agents, distinct across tiers, cleared with
 #      the info cache each round (clear_cache! + simulation step!).
-#   6. Behavioral — at small fixed-seed scale, T=2.0 raises pooled
+#   6. P10 behavioral — at small fixed-seed scale, T=2.0 raises pooled
 #      action-mix entropy vs T=1.0 and T=0.5 lowers it.
 
 using Test
@@ -172,9 +171,9 @@ end
     @test length(sys_on.common_error_cache) == 1
 end
 
-# ── 3 + 4. Signal-commonality dial: variance preservation, correlation flip, accuracy invariance ──
+# ── 3 + 4. P9: variance preservation, correlation flip, accuracy invariance ──
 
-@testset "Emergence audit (signal-commonality): variance preserved, correlation 0 -> 1, accuracy invariant" begin
+@testset "Emergence audit P9: variance preserved, correlation 0 -> 1, accuracy invariant" begin
     eps1_r0, eps2_r0, err_r0 = ea_paired_errors(0.0)
     eps1_r1, eps2_r1, err_r1 = ea_paired_errors(1.0)
 
@@ -205,9 +204,9 @@ end
     @test 0.25 < c5 < 0.75  # commonality rises with rho, strictly between endpoints
 end
 
-# ── 5. Signal-commonality dial: common-draw cache semantics ───────────────────────────────────────
+# ── 5. P9: common-draw cache semantics ───────────────────────────────────────
 
-@testset "Emergence audit (signal-commonality): common draw shared per (opp, tier), cleared per round" begin
+@testset "Emergence audit P9: common draw shared per (opp, tier), cleared per round" begin
     cfg = ea_config(AI_ERROR_CORRELATION = 1.0, HALLUCINATION_INTENSITY = 0.0)
     sys = GlimpseABM.InformationSystem(cfg; common_error_seed = 55)
     opp_a = ea_test_opportunity("ea_cache_a")
@@ -246,7 +245,7 @@ end
     @test !haskey(sim.info_system.common_error_cache, ("ea_sentinel", "premium"))
 end
 
-# ── 6. Decision-temperature dial: behavioral — temperature moves action-mix entropy ────────────────
+# ── 6. P10: behavioral — temperature moves action-mix entropy ────────────────
 
 "Shannon entropy (nats) of the pooled executed-action mix across agents/rounds."
 function ea_action_entropy(temperature::Float64; seeds = (101, 202, 303))
@@ -262,7 +261,7 @@ function ea_action_entropy(temperature::Float64; seeds = (101, 202, 303))
     return -sum(p * log(p) for p in (c / total for c in values(counts)) if p > 0)
 end
 
-@testset "Emergence audit (decision-temperature): T=2 flattens, T=0.5 sharpens the action mix" begin
+@testset "Emergence audit P10: T=2 flattens, T=0.5 sharpens the action mix" begin
     ent_low = ea_action_entropy(0.5)
     ent_mid = ea_action_entropy(1.0)
     ent_high = ea_action_entropy(2.0)

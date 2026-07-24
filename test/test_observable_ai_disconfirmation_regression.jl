@@ -158,7 +158,7 @@ end
     @test events[1]["ai_assisted"] === true
 end
 
-# ── F1 (engine invariants): raw instrument estimate drives scoring ────
+# ── F1: raw instrument estimate drives scoring ─────────────────────────────
 
 function f1_fixture(matured_extra::Dict{String,Any}; ai_level::String = "premium")
     config = EmergentConfig(N_AGENTS=1, N_ROUNDS=1, RANDOM_SEED=919)
@@ -202,20 +202,17 @@ end
         "has_return_estimate" => true))
     @test raw_low.disconfirmation_score != shaded_a.disconfirmation_score
 
-    # Legacy records without the raw key fall back to estimated_return
-    # (pre-split behavior) — and the recorded event matches a fixture that
-    # stores the same value as the raw key.
-    legacy, _, legacy_sim = f1_fixture(Dict{String,Any}("estimated_return" => 2.0))
-    @test legacy.disconfirmation_score == shaded_a.disconfirmation_score
-    @test length(legacy_sim.uncertainty_env.ai_uncertainty_signals["observable_disconfirmation_events"]) == 1
+    # Records without the raw key fall back to estimated_return.
+    fallback, _, fallback_sim = f1_fixture(Dict{String,Any}("estimated_return" => 2.0))
+    @test fallback.disconfirmation_score == shaded_a.disconfirmation_score
+    @test length(fallback_sim.uncertainty_env.ai_uncertainty_signals["observable_disconfirmation_events"]) == 1
 end
 
 @testset "F1: outcomes with NO estimate are excluded (no perfect-forecast dilution)" begin
     # has_return_estimate=false (production marker for an investment that
-    # never stored an estimate): no exposure recorded, no AI-trust learning —
-    # previously the ret_multiple fallback scored these as PERFECT forecasts.
+    # never stored an estimate): no exposure recorded and no AI-trust learning.
     result, agent, sim = f1_fixture(Dict{String,Any}(
-        "estimated_return" => 0.2,   # == ret_multiple (the old dilution path)
+        "estimated_return" => 0.2,
         "has_return_estimate" => false))
     @test result.applied === false
     @test result.was_accurate === nothing
@@ -296,7 +293,7 @@ end
     @test inv["estimated_return"] == 0.8                  # decision basis (sizing/scoring)
     @test inv["instrument_estimated_return"] == 1.7       # raw instrument value
     @test outcome["instrument_estimated_return"] == 1.7
-    # Without the kwarg the two coincide (no-S1 case / legacy callers).
+    # Without the kwarg the two coincide.
     opp2 = Opportunity(id="f1_invest2", latent_return_potential=1.2,
                        latent_failure_potential=0.4, complexity=0.4,
                        sector="tech", competition=0.0, discovered=true)
@@ -307,10 +304,9 @@ end
 end
 
 @testset "No-AI matured outcomes feed the symmetric forecast-disconfirmation channel" begin
-    # Symmetrized channel (engine invariant / open decision #2): a
-    # matured outcome with a large forecast miss produces an exposure even
+    # A matured outcome with a large forecast miss produces an exposure even
     # without AI. The event is flagged as the human baseline population and
-    # AI-trust learning stays untouched (there is no AI to attribute it to).
+    # AI-trust learning stays untouched.
     result, agent, sim = disconfirmation_fixture(
         hidden_hallucination=false,
         estimated_return=2.0,
@@ -347,4 +343,4 @@ end
     @test agent.resources.knowledge["retail"] == 0.8
 end
 
-println("Observable AI disconfirmation regression tests passed.")
+println("Observable AI disconfirmation tests passed.")

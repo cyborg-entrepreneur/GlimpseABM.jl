@@ -51,9 +51,9 @@ function hidden_ai_signal_state(n_exposures::Int, n_hallucinations::Int; seed::I
     return env, market, state
 end
 
-# Record forecast-disconfirmation exposures for one population. The channel
-# is symmetric by design: ai_assisted=false records the
-# human baseline population, ai_assisted=true the AI-assisted population.
+# Record forecast-disconfirmation exposures for one population. The channel is
+# symmetric: ai_assisted=false records the human baseline population, and
+# ai_assisted=true records the AI-assisted population.
 function record_population_disconfirmations!(
     env::KnightianUncertaintyEnvironment,
     n_exposures::Int,
@@ -145,8 +145,8 @@ end
 
     @test small_state["actor_ignorance"]["ai_signal_exposures"] == 10
     @test large_state["actor_ignorance"]["ai_signal_exposures"] == 100
-    # "ai_disconfirmation_rate" is the legacy alias for the OVERALL
-    # forecast-disconfirmation rate since the channel was symmetrized.
+    # "ai_disconfirmation_rate" is the compatibility alias for the overall
+    # forecast-disconfirmation rate.
     @test isapprox(small_state["actor_ignorance"]["ai_disconfirmation_rate"], 0.1; atol=1e-12)
     @test isapprox(large_state["actor_ignorance"]["ai_disconfirmation_rate"], 0.1; atol=1e-12)
     @test isapprox(small_state["actor_ignorance"]["forecast_disconfirmation_rate"], 0.1; atol=1e-12)
@@ -303,4 +303,4 @@ end
     @test GlimpseABM._rolling_ai_signal_stats_cached(env, 4) === cached4
 end
 
-println("AI signal uncertainty regression tests passed.")
+println("AI signal uncertainty tests passed.")

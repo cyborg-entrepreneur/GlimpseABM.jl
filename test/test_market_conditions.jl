@@ -1,7 +1,6 @@
-# v3.0 regression: MarketConditions typed schema.
+# MarketConditions typed-schema tests.
 # Every production consumer of market_conditions accesses a typed field.
-# Guards against re-introducing the silent-zero dataflow bugs fixed in v2.7,
-# v2.9, and v2.12.
+# These tests pin the schema and snapshot behavior used by production code.
 
 using Test
 using Random
@@ -44,10 +43,9 @@ using GlimpseABM
     @test !haskey(mc, "nonexistent_key")
     @test mc["regime"] == mc.regime
 
-    # uncertainty_state can be injected at construction. v3.3.3: snapshot is
-    # deepcopied, so the struct holds a separate object with equal contents —
-    # not the same reference. Mutating `us` after construction must NOT
-    # mutate the snapshot.
+    # uncertainty_state can be injected at construction. The snapshot is
+    # deep-copied, so the struct holds equal contents in a separate object.
+    # Mutating `us` after construction must not mutate the snapshot.
     us = Dict{String,Any}("actor_ignorance" => Dict{String,Any}("level"=>0.5))
     mc2 = GlimpseABM.get_market_conditions(market; uncertainty_state=us)
     @test mc2.uncertainty_state !== us          # separate object

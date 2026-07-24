@@ -1,6 +1,6 @@
 # test/test_opportunity_tail_clamp.jl
 #
-# Guards the opportunity-value tail controls added 2026-06-14:
+# Tests the opportunity-value tail controls:
 #   RETURN_RANGE_MAX_MULT — scales the per-sector return_range[2] draw ceiling (market.jl:159).
 #                           This is THE binding cap on opportunity returns.
 #   RETURN_CLAMP_MAX       — global latent_return ceiling (market.jl:201,1491,1541,1616).
@@ -9,8 +9,8 @@
 # Key fact this test pins: at the defaults, the binding cap is the per-SECTOR ceiling
 # (max return_range[2] = 4.0x, tech), NOT the 25x global clamp — so the 25x clamp never
 # fires at baseline. Raising RETURN_RANGE_MAX_MULT is what releases the venture-realistic
-# right tail (baseline option B, 2026-06-14). Defaults are byte-identical to the prior
-# hardcoded clamps.
+# right tail for option-B comparison runs. Defaults preserve the baseline tail
+# controls.
 
 using Test
 using Random
@@ -19,7 +19,7 @@ push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using GlimpseABM
 
 @testset "Opportunity tail controls" begin
-    # Defaults reproduce the prior hardcoded clamps exactly (byte-identity guard).
+    # Defaults preserve the baseline tail controls.
     cfg0 = EmergentConfig()
     @test cfg0.RETURN_RANGE_MAX_MULT == 1.0
     @test cfg0.RETURN_CLAMP_MAX == 25.0

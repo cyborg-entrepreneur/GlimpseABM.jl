@@ -531,8 +531,7 @@ Determine the sector for an innovation.
 Reactive default: deterministic knowledge-domain mapping (dominant domain of
 the selected components → sector). With ENABLE_DIRECTED_CREATION and a
 perceived `sector_density` from the innovating agent's seat (open-action
-extension A2, the strategy-ladder design notes), the choice becomes a
-MIXTURE that nests the baseline (G3 fix, 2026-06-09): with probability
+extension A2), the choice becomes a mixture that nests the baseline: with probability
 `exp(−DIRECTED_CREATION_STRENGTH)` the knowledge-mapped sector is returned
 deterministically (the flag-off behavior); otherwise the sector is drawn from
 density-tilted weights

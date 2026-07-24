@@ -1,9 +1,7 @@
-# v3.3.2 regression: MarketConditions is a true snapshot.
+# MarketConditions snapshot isolation tests.
 #
-# Pre-v3.3.2 get_market_conditions passed market.tier_invest_share (and the
-# other dict-valued fields) by reference. Mutating the market after the
-# snapshot was taken mutated the snapshot too. A debugging probe confirmed
-# `same_dict_ref=true`. Now dicts are copy/deepcopy'd at construction.
+# Dict-valued market fields are copied into each snapshot, so mutating the
+# live market after the snapshot does not change the snapshot contents.
 
 using Test
 using Random

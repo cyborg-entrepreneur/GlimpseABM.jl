@@ -1,6 +1,5 @@
-# Robustness-addendum knob tests (the adoption-family design notes):
-# AI_BIAS_INTENSITY (NO_AI_BIAS cell) + WEALTH_COMPUTE_SCALING
-# (WEALTH_SCALED_COMPUTE cell).
+# Supplemental knob tests: AI_BIAS_INTENSITY (NO_AI_BIAS cell) and
+# WEALTH_COMPUTE_SCALING (WEALTH_SCALED_COMPUTE cell).
 #
 # Battery (mirrors test_emergence_audit.jl):
 #   1. Defaults — both knobs default to their neutral values.
@@ -9,8 +8,8 @@
 #   3. Bias default neutrality — explicit 1.0 is bit-identical to implicit
 #      (multiplication by exactly 1.0 is an IEEE identity; fingerprint sim).
 #   4. Wealth behavioral — under scaling=1.0 a capital-rich agent's perceived
-#      menu is larger than a capital-poor agent's from the same pool; under
-#      the 0.0 default, capital does not move the menu size.
+#      opportunity set is larger than a capital-poor agent's from the same pool;
+#      under the 0.0 default, capital does not move opportunity-set size.
 #   5. Wealth default neutrality — explicit 0.0 bit-identical to implicit
 #      (the guard skips the block entirely).
 
@@ -105,11 +104,11 @@ end
 
 # ── 4. wealth behavioral ────────────────────────────────────────────────────
 
-@testset "WEALTH_COMPUTE_SCALING widens rich menus, narrows poor ones" begin
+@testset "WEALTH_COMPUTE_SCALING widens rich opportunity sets, narrows poor ones" begin
     # Pool large enough that the visibility budget binds for premium.
     pool = [ra_test_opportunity("ra_w_opp_$(i)") for i in 1:120]
 
-    function menu_sizes(scaling::Float64)
+    function opportunity_set_sizes(scaling::Float64)
         config = ra_config(WEALTH_COMPUTE_SCALING = scaling)
         sim = EmergentSimulation(config = config, seed = 99,
                                  initial_tier_distribution = RA_TIER_MIX)
@@ -125,11 +124,11 @@ end
         return n_rich, n_poor
     end
 
-    n_rich_on, n_poor_on = menu_sizes(1.0)
+    n_rich_on, n_poor_on = opportunity_set_sizes(1.0)
     @test n_rich_on > n_poor_on + 10  # 16x budget gap is decisive, not marginal
 
-    # Default off: capital does not move the menu.
-    n_rich_off, n_poor_off = menu_sizes(0.0)
+    # Default off: capital does not move the opportunity set.
+    n_rich_off, n_poor_off = opportunity_set_sizes(0.0)
     @test abs(n_rich_off - n_poor_off) < 10
 end
 

@@ -1,6 +1,4 @@
-# Regression tests for engine-invariant fixes.
-# Each testset pins one fix; see the design notes for the
-# underlying findings.
+# Scientific-invariant tests for uncertainty, market, and configuration logic.
 
 using Test
 using GlimpseABM
@@ -9,7 +7,7 @@ using Statistics
 
 include("test_helpers.jl")
 
-@testset "engine-invariant fixes" begin
+@testset "Scientific invariants" begin
 
     # ------------------------------------------------------------------
     # T1-1: ai_herding_intensity must measure concentration, not volume.
@@ -61,8 +59,7 @@ include("test_helpers.jl")
         concentrated = run_herding_rounds(true)
 
         # Dispersed AI investing is the null case: no herding signal even
-        # after 30 sustained rounds (the old stock/flow metric pinned at 1.0
-        # here within ~10 rounds).
+        # after 30 sustained rounds.
         @test 0.0 <= dispersed < 0.10
         # All-on-one-opportunity is herding: clearly positive, clearly above
         # the dispersed null, and not saturated at the clamp.
@@ -110,8 +107,8 @@ include("test_helpers.jl")
         # Constant raw signal: action_delta = 0.5 each call, ai/market deltas 0.
         raw = cfg.UNCERTAINTY_ACTION_VARIANCE_WEIGHT * 0.5
         expected = raw * cfg.UNCERTAINTY_VOLATILITY_SCALING
-        # Pre-fix the feedback compounded the scaling: steady state was
-        # ~(1-d)/(1-d*s) * s * raw ≈ 0.21*expected — far outside this band.
+        # The steady state should match the raw signal multiplied by the
+        # configured volatility scaling.
         @test isapprox(vol, expected; rtol=0.05)
     end
 
@@ -138,7 +135,7 @@ include("test_helpers.jl")
         measure_uncertainty_state!(env, market, actions, Innovation[], 1)
         components = env.actor_ignorance_state["components"]
         sparse_gap = Float64(get(components, "knowledge_gap", -1.0))
-        # The old opportunities-per-agent normalizer froze this at exactly 0.
+        # Sparse coverage should produce a positive knowledge-gap component.
         @test sparse_gap > 0.05
 
         # Full coverage: every agent holds every piece -> gap collapses.
@@ -167,8 +164,7 @@ include("test_helpers.jl")
             push!(failures, opp.latent_failure_potential)
         end
         profile = cfg.SECTOR_PROFILES["service"]
-        # Pre-fix every draw was pinned to exactly 0.1 (above the sector max
-        # of ~0.093). Now the calibrated range must be populated with real
+        # The calibrated sector range must be populated with real
         # within-sector variation.
         @test minimum(failures) < 0.09
         @test std(failures) > 0.005
@@ -239,14 +235,14 @@ include("test_helpers.jl")
     end
 
     # ------------------------------------------------------------------
-    # T2-4: regime chain steps at most once per round (legacy path removed).
+    # T2-4: regime chain steps at most once per round.
     # ------------------------------------------------------------------
     @testset "No second regime-transition path exists" begin
         @test !isdefined(GlimpseABM, :_transition_regime!)
     end
 
     # ------------------------------------------------------------------
-    # Test-suite gap (a)(i): default config primitives are tier-neutral.
+    # Default config primitives are tier-neutral.
     # ------------------------------------------------------------------
     @testset "Default config tier primitives are neutral" begin
         cfg = EmergentConfig()
@@ -265,7 +261,7 @@ include("test_helpers.jl")
     end
 
     # ------------------------------------------------------------------
-    # Test-suite gap (e): v3.5 power-law right tail.
+    # Power-law right tail.
     # ------------------------------------------------------------------
     @testset "Power-law tail: alpha governs tail mass; ceiling holds" begin
         function sample_returns(alpha::Float64; n::Int=20_000)
@@ -292,7 +288,7 @@ include("test_helpers.jl")
     end
 
     # ------------------------------------------------------------------
-    # Test-suite gap (c): the crowding penalty is actually convex.
+    # Crowding penalty convexity.
     # ------------------------------------------------------------------
     @testset "Crowding penalty convexity (second difference)" begin
         cfg = EmergentConfig(N_AGENTS=10, N_ROUNDS=5, RANDOM_SEED=94)

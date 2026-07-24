@@ -1,5 +1,4 @@
-# Open-action extension tests (the strategy-ladder design notes
-# §Open-action extension): A1 ENABLE_PIVOT + A2 ENABLE_DIRECTED_CREATION.
+# Open-action extension tests: A1 ENABLE_PIVOT + A2 ENABLE_DIRECTED_CREATION.
 #
 # Battery (mirrors test_strategy_ladder.jl's engineering pattern):
 #   1. Config validation — malformed haircut bounds / negative strength error
@@ -9,8 +8,8 @@
 #      flags-off simulation; an enabled simulation does enter the code.
 #   3. Accounting — a constructed pivot recovers committed × haircut exactly,
 #      reduces opp.total_invested exactly once, removes the record (maturity
-#      can never double-pay), and a later death-release of a stale reference
-#      cannot double-release (idempotent with A5's marker).
+#      can never double-pay), and a later death-release of an already closed
+#      reference cannot double-release (idempotent with A5's marker).
 #   4. Observability — pivot decision and creation-bias density invariant to
 #      hidden-field mutations (latent_*, hidden_factors, contains_hallucination,
 #      actual_accuracy); responsive to observable mutations.
@@ -310,7 +309,7 @@ end
     @test opp2.total_invested == invested2
 end
 
-# ── 3b. pivot mirrors maturity: exposure + ledger (engine invariants F2) ──────────
+# ── 3b. pivot mirrors maturity: exposure + ledger ───────────────────────────
 
 @testset "Open action A1: pivot records a forecast-disconfirmation exposure (raw estimate)" begin
     config = oa_test_config(pivot = true)
@@ -336,8 +335,8 @@ end
     # recovered/amount = 0.575 and pred = the RAW 2.0 (not the shaded 1.0).
     @test ev["return_error"] ≈ abs(recovered / 50_000.0 - 2.0) / 2.0
 
-    # A legacy record with no estimate at all is EXCLUDED from exposure
-    # recording (F1 no-estimate rule) but still pivots on the neutral 1.0.
+    # A record with no estimate at all is excluded from exposure recording but
+    # still pivots on the neutral 1.0.
     agent2, _, inv2 = oa_agent_with_investment(config; seed = 6)
     delete!(inv2, "estimated_return")
     env2 = KnightianUncertaintyEnvironment(config; rng = MersenneTwister(405))
@@ -378,9 +377,7 @@ end
     recovered = stats["pivot_capital_recovered"]
     @test recovered > 0.0
     # Round 1 of a fresh sim has no maturities (n_matured == 0), so the
-    # invest-side returns this round are EXACTLY the pivot recoveries — the
-    # strict closure the old ledger leaked (pivot cash credited to agents but
-    # absent from capital_returned["invest"]).
+    # invest-side returns this round are exactly the pivot recoveries.
     @test stats["n_matured"] == 0
     returned = stats["total_capital_returned_invest"]
     deployed = stats["total_capital_deployed_invest"]
@@ -569,8 +566,7 @@ end
 # ── 7. interaction: the maximal AGI-robustness cell ──────────────────────────
 
 @testset "Open action: OPEN_ACTION_AGI_NATIVE_MARKET cell runs end-to-end" begin
-    # Both open-action channels + composite AGI-native strategy on all tiers
-    # (the strongest-claim cell; suite row OPEN_ACTION_AGI_NATIVE_MARKET).
+    # Both open-action channels plus composite AGI-native strategy on all tiers.
     config = EmergentConfig(N_AGENTS = 24, N_ROUNDS = 8, RANDOM_SEED = 7,
                             ENABLE_PIVOT = true, ENABLE_DIRECTED_CREATION = true,
                             STRATEGY_MODE = "agi_native",

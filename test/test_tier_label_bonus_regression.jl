@@ -102,4 +102,4 @@ end
     @test isnothing(premium_innovation) == isnothing(none_innovation)
 end
 
-println("Tier-label bonus regression tests passed.")
+println("Tier-label bonus tests passed.")

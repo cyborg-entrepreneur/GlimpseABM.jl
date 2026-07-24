@@ -1,10 +1,7 @@
-# v3.2 regression: confidence × signal_score sizing.
+# Confidence x signal_score sizing tests.
 #
-# Before v3.2 Julia sized every bet as min(capital · max_fraction,
-# opp.capital_requirements), regardless of how confident the agent was or
-# how strongly the evaluation scored the opportunity. Python already
-# multiplied by (confidence · signal_score). This test locks in the port:
-# sizing scales with both signals.
+# Investment sizing scales with both decision confidence and opportunity
+# signal strength.
 
 using Test
 using Random
@@ -52,8 +49,8 @@ using GlimpseABM
     @test high_bet / low_bet >= 10.0
 
     # ─────────────────────────────────────────────────────────────
-    # Property 2: legacy call (no confidence/signal) falls back to flat
-    # sizing — preserves backward compat for tests and replay paths.
+    # Property 2: calls without confidence/signal fall back to flat sizing for
+    # tests and replay paths.
     # ─────────────────────────────────────────────────────────────
     GlimpseABM.set_capital!(agent, 1_000_000.0)
     cap_before = GlimpseABM.get_capital(agent)
@@ -61,7 +58,7 @@ using GlimpseABM
     GlimpseABM.execute_action!(agent, "invest", market, 1; opportunity=opp)
     cap_after = GlimpseABM.get_capital(agent)
     flat_bet = cap_before - cap_after
-    # Legacy path: min(capital · max_fraction, capital_requirements)
+    # Flat path: min(capital · max_fraction, capital_requirements)
     # = min(37_000, 10_000) = 10_000
     @test isapprox(flat_bet, 10_000.0; atol=1.0)
 

@@ -30,13 +30,10 @@ function behavioral_uncertainty_state(
     env = KnightianUncertaintyEnvironment(config; rng=MersenneTwister(seed + 1))
 
     # A builder closure receives the live market so synthetic actions can
-    # reference REAL Opportunity objects. The opportunity_competition signal is
+    # reference real Opportunity objects. The opportunity_competition signal is
     # an investment-weighted aggregate over market.opportunities (competition
     # trace + total_invested/capacity saturation), and market.step! bumps
-    # competition only via action["chosen_opportunity_obj"] — fabricated
-    # string IDs never touch it. The pre-fix harness used fabricated IDs, so
-    # the signal evaluated 0.0 on BOTH sides of every comparison and the
-    # crowding assertions passed vacuously.
+    # competition only via action["chosen_opportunity_obj"].
     actions = actions_or_builder isa Vector ? actions_or_builder :
               actions_or_builder(market)
 
@@ -117,19 +114,32 @@ function crowding_invest_actions(
 end
 
 @testset "Uncertainty crowding and novelty use behavioral channels" begin
-    # Amount sized against the N=24 market: ~5 opportunities at ~$2.0–2.8M
-    # capacity. Spread (24 × $100k over 5 opps ≈ $480k each) stays well under
-    # capacity; clustered (24 × $100k = $2.4M into one) saturates it. Both the
-    # saturation leg and the competition-trace leg of the signal then separate
-    # the two cases instead of clamping to 1.0 on both sides.
+    # Normalize opportunity capacity inside this mechanism probe, then deploy
+    # the same aggregate capital in both cases. With ~5 opportunities, spread
+    # capital produces load ≈0.4 per niche while clustered capital produces
+    # load 2.0 in one niche. This isolates concentration from the production
+    # capacity distribution and remains valid when small-N population scaling
+    # changes.
     spread_state = behavioral_uncertainty_state(
-        market -> crowding_invest_actions_real(market, "premium", 24;
-                                               cluster=false, amount=100_000.0);
+        market -> begin
+            common_capacity = market.config.OPPORTUNITY_BASE_CAPACITY
+            for opp in market.opportunities
+                opp.capacity = common_capacity
+            end
+            crowding_invest_actions_real(market, "premium", 24;
+                cluster=false, amount=2.0 * common_capacity / 24)
+        end;
         n_agents=24,
     )
     clustered_state = behavioral_uncertainty_state(
-        market -> crowding_invest_actions_real(market, "premium", 24;
-                                               cluster=true, amount=100_000.0);
+        market -> begin
+            common_capacity = market.config.OPPORTUNITY_BASE_CAPACITY
+            for opp in market.opportunities
+                opp.capacity = common_capacity
+            end
+            crowding_invest_actions_real(market, "premium", 24;
+                cluster=true, amount=2.0 * common_capacity / 24)
+        end;
         n_agents=24,
     )
 
@@ -139,12 +149,8 @@ end
           spread_state["practical_indeterminism"]["crowding_pressure"]
     # Crowding is opportunity-level: clustering capital into one opportunity
     # saturates it (24× the per-opportunity capital of the spread case), so
-    # opportunity_competition must be STRICTLY higher — and alive on both
-    # sides. The non-degeneracy floors are the real guard: a regression that
-    # zeroes the signal (the pre-fix harness state) fails them immediately
-    # instead of passing 0.0 >= 0.0. This channel carries the full
-    # crowding_opportunity_competition_weight producer weight inherited from
-    # the deleted sector-level terms.
+    # opportunity_competition must be strictly higher and non-degenerate on
+    # both sides.
     clustered_oc = clustered_state["practical_indeterminism"]["opportunity_competition"]
     spread_oc = spread_state["practical_indeterminism"]["opportunity_competition"]
     @test 0.0 <= clustered_oc <= 1.0
@@ -204,4 +210,4 @@ end
           no_ai_zero_vol_recursion["competitive_recursion"]["level"]
 end
 
-println("Uncertainty crowding behavioral regression tests passed.")
+println("Uncertainty crowding behavioral tests passed.")

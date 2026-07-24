@@ -5,8 +5,7 @@ using GlimpseABM: MarketConditions
 
 """
 Build a `MarketConditions` for tests with sensible defaults. Overrides via
-kwargs. Introduced in v3.0 to replace the ad-hoc `Dict{String,Any}(...)`
-test constructions that were drifting away from the production schema.
+kwargs. Uses the production typed schema.
 """
 function test_market_conditions(; regime::String="normal",
                                   volatility::Float64=0.2,

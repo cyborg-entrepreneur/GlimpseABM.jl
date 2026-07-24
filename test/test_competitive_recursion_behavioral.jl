@@ -89,4 +89,4 @@ end
           spread_state["competitive_recursion"]["ai_action_correlation"]
 end
 
-println("Competitive recursion behavioral regression tests passed.")
+println("Competitive recursion behavioral tests passed.")

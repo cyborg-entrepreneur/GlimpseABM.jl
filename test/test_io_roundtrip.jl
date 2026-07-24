@@ -5,13 +5,12 @@ using CSV
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using GlimpseABM
 
-@testset "Partial override regressions" begin
+@testset "Partial override behavior" begin
     cfg = EmergentConfig(N_AGENTS=1000)
     GlimpseABM.initialize!(cfg)
 
     # Override a single nested field inside a Dict{String,SectorProfile} entry.
-    # Without struct-aware deep merge this errored with
-    # "Missing field 'return_range' while reconstructing SectorProfile".
+    # Struct-aware deep merge preserves omitted sibling fields.
     original_tech = cfg.SECTOR_PROFILES["tech"]
     original_retail_ops = cfg.SECTOR_PROFILES["retail"].operational_cost_range
     GlimpseABM.apply_overrides!(cfg, Dict{String,Any}(
@@ -27,7 +26,7 @@ using GlimpseABM
     # Untouched sectors retain all fields.
     @test cfg.SECTOR_PROFILES["retail"].operational_cost_range == original_retail_ops
 
-    # Same fix exercised through Dict{String,AILevelConfig}.
+    # Same behavior through Dict{String,AILevelConfig}.
     original_premium = cfg.AI_LEVELS["premium"]
     GlimpseABM.apply_overrides!(cfg, Dict{String,Any}(
         "AI_LEVELS" => Dict{String,Any}(
@@ -76,7 +75,7 @@ using GlimpseABM
           original_perception.recursion_prior_weight
 end
 
-@testset "I/O roundtrip regressions" begin
+@testset "I/O roundtrip behavior" begin
     mktempdir() do dir
         cfg = EmergentConfig(N_AGENTS=2, N_ROUNDS=1, RANDOM_SEED=123)
         GlimpseABM.initialize!(cfg)
@@ -114,4 +113,4 @@ end
     end
 end
 
-println("I/O roundtrip regression tests passed.")
+println("I/O roundtrip tests passed.")

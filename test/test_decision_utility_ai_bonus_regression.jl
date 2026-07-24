@@ -139,4 +139,4 @@ end
     @test none_outcome["is_new_combination"] == premium_outcome["is_new_combination"]
 end
 
-println("Decision-utility AI bonus regression tests passed.")
+println("Decision-utility AI bonus tests passed.")

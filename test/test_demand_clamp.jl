@@ -1,14 +1,8 @@
-# v3.3.1 regression: demand adjustment clamp.
+# Demand adjustment clamp tests.
 #
-# Pre-v3.3.1 get_demand_adjustments could produce return_penalty=15.67 and
-# failure_pressure=-9.36 under crowded sectors due to unchecked multiplicative
-# compounding of crowd_excess, crowd_relief, and clearing_ratio terms. The
-# negative failure then got clamp-saved to 0.05 at models.jl:224, making
-# oversubscribed sectors functionally immortal — an obvious physics violation.
-#
-# This test installs a crowded-sector state into the market, calls
-# get_demand_adjustments directly, and asserts both outputs fall in a sane
-# positive range.
+# This test installs crowded-sector states into the market, calls
+# get_demand_adjustments directly, and asserts both outputs remain finite,
+# positive, and economically bounded.
 
 using Test
 using Random
@@ -21,8 +15,7 @@ using GlimpseABM
     GlimpseABM.initialize!(cfg)
     market = MarketEnvironment(cfg; rng=MersenneTwister(42))
 
-    # Force an extreme crowding + extreme clearing ratio state. This exactly
-    # reproduces the audit probe conditions.
+    # Force an extreme crowding + extreme clearing-ratio state.
     market.crowding_metrics["share_invest"] = 0.95   # far above threshold
     market.sector_clearing_index["tech"] = 10.0      # extreme hot market
 
@@ -33,9 +26,7 @@ using GlimpseABM
     ret = adj["return"]
     fail = adj["failure"]
 
-    # Both must be finite, positive, and within sane economic bounds. Pre-v3.3.1
-    # the unclamped compound formulas produced return=15.67 and failure=-9.36
-    # in this exact scenario.
+    # Both must be finite, positive, and within sane economic bounds.
     @test isfinite(ret)
     @test isfinite(fail)
     @test ret > 0.0     # returns can't be negative

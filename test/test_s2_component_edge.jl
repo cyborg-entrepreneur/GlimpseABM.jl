@@ -115,4 +115,4 @@ end
     @test all(isempty(o.knowledge_components) for o in sim.market.opportunities)
 end
 
-println("S2 component-edge regression tests passed.")
+println("S2 component-edge tests passed.")

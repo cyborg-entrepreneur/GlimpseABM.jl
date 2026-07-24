@@ -205,4 +205,4 @@ end
     @test haskey(fifty_conf, "confidence_saturation_hit")
 end
 
-println("Variance wiring regression tests passed.")
+println("Variance wiring tests passed.")

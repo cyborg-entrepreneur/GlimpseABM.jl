@@ -1,23 +1,9 @@
-# v3.3/v3.5 regression: the perception → utility pathway for Knightian uncertainty.
+# Perception-to-utility pathway tests for Knightian uncertainty.
 #
-# Before v3.3 the ignorance_adjustment sigmoid was centered outside agents'
-# operating range, so perception barely affected utility. Later fixes removed
-# direct raw-tier perception discounts: premium should differ from none through
-# actual visibility/evidence, learned experience, and behavioral concentration,
-# not because the tier label directly lowers actor ignorance.
-#
-# This test guards the pathway — if either fix regresses, the Knightian
-# framing detaches from decision utility and the paper's claim no longer
-# holds in the code.
-#
-# Restoration: the guards below previously (a)
-# asserted |Δ| > 0.001 (a vacuous floor ~80× weaker than the original 0.08
-# directional spread) and (b) mirrored a stale copy of the utility formula
-# (clamp(1 − unc·0.8, 0.2, 1.0) on RAW perception) instead of exercising the
-# production path, which routes perception through
-# _response_adjusted_uncertainty before the 0.8 mapping. Both are fixed:
-# magnitudes are material again, and every pathway assertion now calls the
-# production functions (no local re-implementation of any coefficient).
+# Premium should differ from no-AI through actual visibility/evidence, learned
+# experience, and behavioral concentration, not because the tier label directly
+# lowers actor ignorance. These tests call production functions directly and
+# require material pathway magnitudes.
 
 using Test
 using Random
@@ -120,7 +106,7 @@ end
     # With populated niche ontology, frontier can see many more opaque/tacit
     # opportunities. That can raise, rather than lower, average actor ignorance
     # because the extra opportunity surface carries real unresolved uncertainty.
-    # Direction is design-ambiguous in v3.5; MAGNITUDE is not — the tiers must
+    # Direction is design-ambiguous; magnitude is not — the tiers must
     # perceive materially different ignorance or the Knightian framing detaches
     # from the tier comparison entirely.
     # ───────────────────────────────────────────────────────────────
@@ -170,10 +156,9 @@ end
     # production constants, no mirror) responds to perceived ignorance and
     # recursion in the correct direction and at material magnitude. Perception
     # variants are built by struct-rebuild on the live perception; agents are
-    # deep-copied per call so RNG/capital state cannot leak between calls.
-    # Catches: zeroed coefficients, clamp dead zones, transform saturation,
-    # and formula drift — the exact regressions the old mirrored-formula
-    # version could not see.
+    # deep-copied per call so RNG/capital state stays isolated between calls.
+    # Catches zeroed coefficients, clamp dead zones, transform saturation, and
+    # formula drift.
     # ───────────────────────────────────────────────────────────────
     ctx = prem_p.ctx
     @test !isnothing(ctx)
@@ -193,11 +178,7 @@ end
     # Material, not epsilon. The ignorance adjustment is multiplicative on the
     # neutral-information scaled score (info_system=nothing here), so the
     # absolute gap is smaller than the subtractive recursion penalty below.
-    # Threshold recalibrated 2026-06-09: the innovativeness respecification
-    # (lognormal → Beta(6,2)) shifted seed-42 trait draws, moving the observed
-    # healthy gap from ≈ 0.016 to ≈ 0.0092 (verified unaffected by the
-    # dormant-mechanism excisions, which are value-identical at this seed).
-    # 0.005 still sits well above any flattened-pathway regression (≈ 0).
+    # Threshold sits above any effectively flattened pathway.
     @test u_ig_low - u_ig_high > 0.005
 
     u_rec_low  = utility_at(:competitive_recursion, 0.15)

@@ -1,9 +1,5 @@
 # Producer/consumer consistency check for action-dict keys.
 #
-# v2.3 auditing caught three "silent zero" bugs where a consumer read key X but
-# producers emitted key Y (e.g. "investment_amount" vs "amount"). Both names
-# look reasonable in isolation; the bug is invisible to a code reader.
-#
 # This test scans the source for every consumer key (`get(<dict>, "X", ...)`
 # and `<dict>["X"]` reads) and asserts that at least one producer somewhere
 # in the codebase writes that key. Catches typos automatically.
@@ -39,10 +35,8 @@ const ALLOWED_CONSUMER_ONLY = Set([
     # Optional config-driven fields with documented fallback defaults
     "info_quality", "info_breadth", "per_use_cost",
     # TraitDistribution params consumed by utils.jl sample_trait with a
-    # documented fallback (1.0). No default trait uses the lognormal spec
-    # since the 2026-06-09 innovativeness respecification, so no Dict-literal
-    # producer remains in src/, but the lognormal branch is a supported
-    # config option.
+    # documented fallback (1.0). The lognormal branch is a supported config
+    # option even when no default trait uses it.
     "sigma",
     # Innovation outcome details (subdict of action)
     "chosen_opportunity_details", "innovation_details", "innovation_obj",
@@ -50,22 +44,18 @@ const ALLOWED_CONSUMER_ONLY = Set([
     "operating_cost_estimate", "primary_sector", "risk_tolerance",
     # Recovery / fallback only consulted when matured-outcome record is missing
     "expected_return",
-    # Legacy alias for "amount" — kept as fallback in market.jl consumers
+    # Compatibility alias for "amount" in market.jl consumers.
     "capital_deployed",
     # market_conditions fields populated by market.jl get_market_conditions
     "ai_tier_shares", "sector_demand_adjustments", "aggregate_clearing_ratio",
-    # v3.0: MarketConditions is now a typed struct; field access replaces
-    # string-keyed reads. The consistency scan still sees these as orphan
-    # "consumer-only" keys because writes are now field assignments, not
-    # string-keyed dict entries. All allowlisted here — see
-    # market_conditions.jl for the authoritative schema.
+    # MarketConditions is a typed struct; field access replaces string-keyed
+    # reads. The consistency scan still sees these as consumer-only keys
+    # because writes are field assignments, not string-keyed dict entries.
     "trend", "momentum", "n_opportunities", "exploration_activity",
     "crowding_metrics", "combo_hhi", "crowding_index", "extras",
-    # Phase 1 of dict→struct migration: OpportunityEvaluation is now a typed
-    # struct (models.jl). These keys were previously consumed via dict access
-    # on the eval_record returned from evaluate_portfolio_opportunities;
-    # consumers now use field access (best_eval.final_score etc.) so the
-    # scanner no longer sees matching producer entries.
+    # OpportunityEvaluation is a typed struct (models.jl). Consumers use field
+    # access (best_eval.final_score etc.), so the scanner does not see
+    # matching string-key producer entries.
     "final_score", "competition_at_evaluation",
 ])
 

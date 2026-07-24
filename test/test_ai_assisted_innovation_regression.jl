@@ -194,4 +194,4 @@ end
           GlimpseABM.calculate_potential(human, market_conditions)
 end
 
-println("AI-assisted innovation regression tests passed.")
+println("AI-assisted innovation tests passed.")

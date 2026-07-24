@@ -13,9 +13,8 @@ include("test_helpers.jl")
         complexity=0.5,
     )
 
-    # Default keyword constructor produces typed-zero AI fields when ai_info
-    # is nothing (matches the dict producer that previously omitted those keys
-    # entirely when no Information was available).
+    # Default keyword constructor produces typed-zero AI fields when ai_info is
+    # nothing.
     ev = OpportunityEvaluation(;
         opportunity=opp,
         final_score=1.42,
@@ -113,7 +112,7 @@ end
     config.STRATEGIC_ANTICIPATION_STRENGTH = 1.0
 
     opp = Opportunity(
-        id="mechanism_probe",
+        id="strategy_probe",
         latent_return_potential=2.0,
         latent_failure_potential=0.55,
         complexity=0.8,
@@ -247,4 +246,4 @@ end
     @test isapprox(GlimpseABM.get_capital(agent) - before, amount * expected_multiple)
 end
 
-println("OpportunityEvaluation regression tests passed.")
+println("OpportunityEvaluation tests passed.")

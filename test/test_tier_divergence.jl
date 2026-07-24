@@ -1,17 +1,9 @@
-# Regression test: AI-tier-aware ranking
+# AI-tier-aware ranking test.
 #
 # Asserts that two agents facing the same opportunity set but with different
 # AI tiers produce different top-3 rankings in a non-trivial fraction of trials.
-#
-# Before the 2026-04-23 correctness fixes, this test FAILED — the
-# evaluate_portfolio_opportunities function discarded tier-noisy
-# `estimated_returns` and ranked by `latent_return_potential` (hidden ground
-# truth) for every tier, so all tiers always picked the same top opportunity.
-#
-# After the fix, `evaluate_opportunity_basic` accepts an `estimated_return`
-# parameter that reflects AI tier (via InformationSystem.get_information when
-# available, else inline tier-noise model). This test guards against the
-# bypass coming back.
+# Ranking should use tier-specific estimated returns rather than latent
+# opportunity returns.
 
 using Test
 using Random
@@ -25,7 +17,7 @@ include("test_helpers.jl")
 const N_TRIALS = 100
 const N_OPPS = 50
 
-@testset "AI-tier ranking divergence (regression)" begin
+@testset "AI-tier ranking divergence" begin
     config = EmergentConfig(N_AGENTS=2, N_ROUNDS=1, RANDOM_SEED=42)
     market = MarketEnvironment(config; rng=MersenneTwister(42))
     info_system = InformationSystem(config)
@@ -100,7 +92,7 @@ const N_OPPS = 50
     avg_top3_overlap = top3_overlap_sum / N_TRIALS
     avg_rank_corr = rank_corr_sum / N_TRIALS
 
-    @info "Tier-divergence regression test results" top1_match_rate avg_top3_overlap avg_rank_corr
+    @info "Tier-divergence test results" top1_match_rate avg_top3_overlap avg_rank_corr
 
     # Primary assertion: top-1 should NOT always agree
     # If tiers always pick the same top opportunity, mechanism is bypassed.

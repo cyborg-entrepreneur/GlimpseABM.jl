@@ -1,7 +1,5 @@
-# Phase 2 regression: Perception typed schema + nested-struct shim + snapshot isolation.
-# Mirrors test_market_conditions.jl design. Guards against the v3.3.2 / v3.3.3
-# "live mutable dict reference" bug class that bit MarketConditions twice
-# before snapshot isolation was added.
+# Perception typed schema, nested-struct shim, and snapshot-isolation tests.
+# Mirrors test_market_conditions.jl design.
 
 using Test
 using Random
@@ -104,13 +102,10 @@ end
     @test isempty(empty_context.opportunity_signals)
 end
 
-@testset "Perception snapshot isolation (v3.3.2 regression class)" begin
-    # If perception.crowding_metrics holds a reference to the live
-    # market_conditions.crowding_metrics dict, mutating the market later
-    # in the round would silently change all already-cached Perception
-    # objects. This was the v3.3.2 bug class for MarketConditions; we
-    # explicitly snapshot-isolate crowding_metrics in uncertainty.jl when
-    # constructing Perception.
+@testset "Perception snapshot isolation" begin
+    # perception.crowding_metrics must hold a snapshot of
+    # market_conditions.crowding_metrics so later market mutations do not
+    # change already-cached Perception objects.
     cfg = EmergentConfig(N_AGENTS=10, N_ROUNDS=1, RANDOM_SEED=42)
     GlimpseABM.initialize!(cfg)
     market = MarketEnvironment(cfg; rng=MersenneTwister(42))
@@ -483,4 +478,4 @@ end
     @test GlimpseABM._action_decision_confidence(action) == perception.decision_confidence
 end
 
-println("Perception regression tests passed.")
+println("Perception tests passed.")

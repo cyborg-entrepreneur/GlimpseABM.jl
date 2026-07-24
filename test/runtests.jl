@@ -192,7 +192,7 @@ using DataFrames
         @test isapprox(sum(normalized), 1.0)
     end
 
-    # Run external regression tests (each in its own @testset)
+    # Run external test files (each in its own @testset).
     include("test_tier_divergence.jl")
     include("test_diagnostics.jl")
     include("test_action_keys.jl")
@@ -220,15 +220,17 @@ using DataFrames
     include("test_confidence_outcome_diagnostics.jl")
     include("test_emergent_uncertainty_diagnostics.jl")
     include("test_paradox_mechanism_scorecard.jl")
-    include("test_engine_invariants.jl")
+    include("test_scientific_invariants_2026_06.jl")
     include("test_fixed_tier_assignment.jl")
+    include("test_tier_balance.jl")
     include("test_strategy_ladder.jl")
     include("test_s2_component_edge.jl")
     include("test_open_action_space.jl")
     include("test_emergence_audit.jl")
-    include("test_robustness_addendum_knobs.jl")
+    include("test_supplemental_robustness_knobs.jl")
     include("test_opportunity_tail_clamp.jl")
-    include("test_robustness_wiring.jl")
+    include("test_robustness_suite_wiring.jl")
+    include("test_posthoc_strategic_counterfactuals.jl")
 
 end
 

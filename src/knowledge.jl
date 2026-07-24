@@ -360,7 +360,7 @@ function get_ai_info_signals(kb::KnowledgeBase, ai_level::String)::Tuple{Float64
     if profile isa AILevelConfig
         return (Float64(profile.info_quality), Float64(profile.info_breadth))
     else
-        # Fallback for Dict-style access (legacy)
+        # Fallback for Dict-style access.
         return (Float64(get(profile, "info_quality", 0.0)), Float64(get(profile, "info_breadth", 0.0)))
     end
 end
@@ -523,9 +523,7 @@ function learn_from_success!(
     end
 
     # Create derived knowledge for high-quality innovations. The gate is
-    # config-driven (DERIVED_KNOWLEDGE_QUALITY_GATE, default 0.7 = byte-identical)
-    # so the recombinant cycle can be un-deadlocked (base-only quality maxes near
-    # 0.61 < 0.7; see the config note).
+    # config-driven through DERIVED_KNOWLEDGE_QUALITY_GATE.
     derived_gate = isnothing(kb.config) ? 0.7 : kb.config.DERIVED_KNOWLEDGE_QUALITY_GATE
     if innovation.success && innovation.quality > derived_gate
         new_knowledge = create_derived_knowledge(kb, innovation)

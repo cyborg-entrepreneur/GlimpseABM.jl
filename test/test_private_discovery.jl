@@ -132,4 +132,4 @@ end
     @test GlimpseABM._public_diffusion_probability(visible_trace, 10) > 0.20
 end
 
-println("Private discovery regression tests passed.")
+println("Private discovery tests passed.")

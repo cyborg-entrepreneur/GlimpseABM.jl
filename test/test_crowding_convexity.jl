@@ -1,10 +1,8 @@
-# v3.1 regression: capital-saturation convexity crowding.
+# Capital-saturation convexity crowding tests.
 #
-# Locks in the core property of the refactor: the crowding penalty
-# depends on capital saturation (total_invested / capacity), NOT on the
-# count of competitors (opp.competition). Count-based dependence was the
-# bug the refactor targeted — ten $10k investments should not penalize
-# returns the same as one $10M investment.
+# The crowding penalty depends on capital saturation (total_invested /
+# capacity), not on the count of competitors (opp.competition). Ten $10k
+# investments should not penalize returns the same as one $10M investment.
 
 using Test
 using Random
@@ -44,8 +42,28 @@ include(joinpath(@__DIR__, "test_helpers.jl"))
     # ───────────────────────────────────────────────────────────────
     rng = MersenneTwister(42)
     N = 400
-    low_sat  = build_opp(0.3)    # well below K_sat=1.2
+    low_sat  = build_opp(0.3)    # well below canonical kappa=1.5
     high_sat = build_opp(2.5)    # well above K_sat
+
+    # The shared helper is the single formula used by both payoff realization
+    # and maturity telemetry. Lock its exact pure-I/K equation, then verify the
+    # named robustness blend changes only effective load.
+    market_conditions.crowding_metrics["crowding_index"] = 0.60
+    pure_terms = GlimpseABM.capacity_crowding_terms(
+        high_sat, market_conditions, cfg)
+    pure_excess = max(0.0,
+        2.5 / cfg.CROWDING_CAPACITY_RATIO_K - 1.0)
+    pure_expected = exp(-cfg.CROWDING_STRENGTH_LAMBDA *
+        pure_excess^cfg.CROWDING_CONVEXITY_GAMMA)
+    @test pure_terms.effective_load == 2.5
+    @test pure_terms.multiplier ≈ pure_expected
+
+    blend_cfg = deepcopy(cfg)
+    blend_cfg.CROWDING_INDEX_BLEND = 0.30
+    blend_terms = GlimpseABM.capacity_crowding_terms(
+        high_sat, market_conditions, blend_cfg)
+    @test blend_terms.effective_load ≈ 2.5 + 0.30 * 0.60
+    @test blend_terms.multiplier < pure_terms.multiplier
 
     low_returns  = [GlimpseABM.realized_return(low_sat,  market_conditions; rng=rng) for _ in 1:N]
     rng = MersenneTwister(42)
@@ -58,8 +76,7 @@ include(joinpath(@__DIR__, "test_helpers.jl"))
     # ───────────────────────────────────────────────────────────────
     # Property 2: Count-invariance. Two opps with identical capital
     # saturation but wildly different competition counts produce
-    # statistically indistinguishable returns. This is THE point of
-    # the v3.1 refactor.
+    # statistically indistinguishable returns.
     # ───────────────────────────────────────────────────────────────
     few_competitors  = build_opp(1.0, competition=1.0)
     many_competitors = build_opp(1.0, competition=50.0)
@@ -83,9 +100,11 @@ include(joinpath(@__DIR__, "test_helpers.jl"))
         rng = MersenneTwister(42)
         push!(means, mean(GlimpseABM.realized_return(opp, market_conditions; rng=rng) for _ in 1:N))
     end
-    # Allow 1-2 inversions due to stochastic noise, but the overall trend must be down
+    # Pure I/K canonical form: paired draws are exactly unchanged through the
+    # threshold, then fall monotonically once the local capital load exceeds it.
+    @test means[1] == means[2] == means[3]
+    @test means[3] > means[4] > means[5]
     @test means[1] > means[end]
-    @test means[1] > means[3]  # 0.5 vs 1.5
 end
 
 println("Capital-saturation crowding test passed.")

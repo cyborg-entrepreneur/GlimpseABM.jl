@@ -1,10 +1,8 @@
 #!/usr/bin/env julia
 #
-# Theory-facing robustness/refutation suite for the paradox of future knowledge.
+# Manuscript robustness suite for the paradox of future knowledge.
 #
-# This supersedes the older ad hoc robustness manifest. Historical
-# exploratory scripts are retained, but this is the curated suite to use in
-# manuscript robustness tables.
+# This is the curated robustness suite used for manuscript tables.
 #
 # PRIMARY vs ROBUSTNESS DESIGNS: the paper's primary models are the mixed
 # fixed-tier (fixed_mixed) conditions — N=1000, exactly 250 agents per tier
@@ -12,7 +10,7 @@
 # AGENT_AI_MODE="fixed" + fixed_ai_level (see scripts/_fixed_tier_assignment.jl).
 # These feed the causal IUT machinery. Emergent-adoption conditions are
 # robustness/descriptive checks only and are excluded from the causal IUT
-# machinery (2026-06-09 scripts fixes).
+# machinery.
 #
 # Conditions are organized around four theory-driven categories:
 #   1. internal_validity_placebo
@@ -30,8 +28,14 @@
 #   N_AGENTS=2000 N_RUNS=50 SUITE_PRESET=core julia --threads=auto --project=. scripts/run_robustness_suite.jl
 #   CONDITIONS=BASELINE,NO_CROWDING N_AGENTS=64 N_RUNS=2 N_ROUNDS=6 julia --project=. scripts/run_robustness_suite.jl
 
-using Pkg
-Pkg.activate(joinpath(@__DIR__, ".."))
+# Activate the project environment only when run as a standalone script.
+# test_robustness_suite_wiring.jl include()s this file inside a module for
+# harness access; the Pkg.test sandbox has no Pkg stdlib on the load path, so
+# includes must not switch the active environment mid-suite.
+if abspath(PROGRAM_FILE) == @__FILE__
+    import Pkg
+    Pkg.activate(joinpath(@__DIR__, ".."))
+end
 
 using GlimpseABM
 using Statistics
@@ -75,6 +79,36 @@ const MARKET_RECURSION_DIAGNOSTIC_KEYS = [
     "market_ai_herding_intensity",
     "market_ai_action_correlation",
     "market_combo_reuse_pressure",
+]
+# Outcome families reported together in the final ablation exhibit.  Keep the
+# legacy survival-only paired file for downstream compatibility, and emit this
+# long-form panel as its multivariate companion.  Scales are display units:
+# thousands of dollars, counts per founder, and percentage points.
+const PAIRED_OUTCOME_SPECS = [
+    (
+        outcome="terminal_net_worth",
+        outcome_label="Terminal net worth",
+        outcome_family="economic",
+        source_column=:mean_net_worth,
+        scale=1.0e-3,
+        unit="thousand_usd_per_founder",
+    ),
+    (
+        outcome="knowledge_combinations",
+        outcome_label="New knowledge combinations",
+        outcome_family="innovation",
+        source_column=:combinations_per_agent,
+        scale=1.0,
+        unit="combinations_per_founder",
+    ),
+    (
+        outcome="five_year_survival",
+        outcome_label="Five-year survival",
+        outcome_family="survival",
+        source_column=:survival_rate,
+        scale=100.0,
+        unit="percentage_points",
+    ),
 ]
 const PARADOX_SCORECARD_KEYS = [
     "actor_ignorance_level",
@@ -155,31 +189,25 @@ const SUITE_PRESET = lowercase(get(ENV, "SUITE_PRESET", "core"))
 # returns, and opportunity capacity. Off by default; canonical runs are unaffected.
 const VENTURE_PANEL = lowercase(get(ENV, "VENTURE_PANEL", "0")) in ("1", "true", "on", "yes")
 
-# Unicorn-tail baseline (2026-06-14): the venture-realistic heavy
-# right tail is the BASELINE for every condition; TRUNCATED_TAIL / MODERATE_TAIL recover
-# lighter distributions as robustness. Calibrated (2-seed probe) to land aggregate survival
-# in the venture-class band; UT_OPS is overridable for fine-tuning, and UNICORN_TAIL=off
-# reverts to the truncated baseline for comparison.
-# The unicorn tail on opportunity RETURNS is RETIRED as canonical (2026-06-15): a
-# 2000x opportunity return is a firm valuation, not an opportunity property — a category
-# error. Kept off by default; available for comparison via UNICORN_TAIL=on.
-const UNICORN_TAIL = lowercase(get(ENV, "UNICORN_TAIL", "off")) != "off"
+# Option-B heavy-tail comparison: a venture-like right tail on opportunity
+# returns. Kept off by default because the canonical model locates the heavy
+# tail in niche/market size; available for comparison via OPTION_B_TAIL=on.
+const OPTION_B_TAIL = lowercase(get(ENV, "OPTION_B_TAIL", "off")) != "off"
 const HEAVY_TAIL_RETURNS = lowercase(get(ENV, "HEAVY_TAIL_RETURNS", "off")) in ("1", "true", "on", "yes")
-const UT_SIGMA_MULT  = parse(Float64, get(ENV, "UT_SIGMA_MULT", "4.0"))
-const UT_SIGMA_CAP   = parse(Float64, get(ENV, "UT_SIGMA_CAP",  "3.0"))
-const UT_RANGE_MULT  = parse(Float64, get(ENV, "UT_RANGE_MULT", "250.0"))
-const UT_CLAMP_MAX   = parse(Float64, get(ENV, "UT_CLAMP_MAX",  "2000.0"))
-const UT_OPS         = parse(Float64, get(ENV, "UT_OPS",        "0.70"))
-# NICHE-SIZE CANONICAL (2026-06-15) — the corrected model. Realistic opportunity returns
-# (raw sector economics, no inflation) with the venture-realistic heavy tail relocated to
-# niche/market SIZE (NICHE_SIZE_LOG_SIGMA). Capacity/crowding telemetry and
-# return-capture ratios support the supplemental mechanism checks; survival is
-# a downstream outcome. Calibrated: σ=1.5, ops=0.85 -> pooled survival ~78%.
-# Default ON.
+const B_SIGMA_MULT  = parse(Float64, get(ENV, "B_SIGMA_MULT", "4.0"))
+const B_SIGMA_CAP   = parse(Float64, get(ENV, "B_SIGMA_CAP",  "3.0"))
+const B_RANGE_MULT  = parse(Float64, get(ENV, "B_RANGE_MULT", "250.0"))
+const B_CLAMP_MAX   = parse(Float64, get(ENV, "B_CLAMP_MAX",  "2000.0"))
+const B_OPS         = parse(Float64, get(ENV, "B_OPS",        "0.70"))
+# Canonical niche-size tail: realistic opportunity returns with the
+# venture-like heavy tail represented as niche/market size
+# (NICHE_SIZE_LOG_SIGMA). Capacity/crowding telemetry and return-capture ratios
+# support supplemental mechanism checks; survival is a downstream outcome.
+# Calibrated default: sigma=1.5, ops=0.85.
 const NICHE_CANONICAL = lowercase(get(ENV, "NICHE_CANONICAL", "on")) != "off"
 const NICHE_SIGMA = parse(Float64, get(ENV, "NICHE_SIGMA", "1.5"))
 const NICHE_OPS   = parse(Float64, get(ENV, "NICHE_OPS",   "0.85"))
-const DERIVED_GATE = parse(Float64, get(ENV, "DERIVED_GATE", "0.55"))  # un-deadlock recombinant knowledge growth (2026-06-22)
+const DERIVED_GATE = parse(Float64, get(ENV, "DERIVED_GATE", "0.55"))  # recombinant knowledge maturity gate
 const NICHE_MODERATE_SIGMA = parse(Float64, get(ENV, "NICHE_MODERATE_SIGMA", string(NICHE_SIGMA * 0.5)))
 const SUITE_SEED_MODE = lowercase(get(ENV, "SUITE_SEED_MODE", "paired"))
 const CONDITION_FILTER = strip(get(ENV, "CONDITIONS", ""))
@@ -258,6 +286,44 @@ finite_mean(values)::Float64 = begin
     isempty(vals) ? 0.0 : mean(vals)
 end
 
+function venture_metric_mean(events, index::Int)::Union{Missing,Float64}
+    values = Float64[]
+    for event in events
+        index <= length(event) || continue
+        value = Float64(event[index])
+        isfinite(value) && push!(values, value)
+    end
+    return isempty(values) ? missing : mean(values)
+end
+
+function venture_effective_saturation_mean(events)::Union{Missing,Float64}
+    values = Float64[]
+    for event in events
+        length(event) >= 17 || continue
+        base_capacity = Float64(event[8])
+        raw_saturation = Float64(event[11])
+        effective_capacity = Float64(event[17])
+        if isfinite(base_capacity) && isfinite(raw_saturation) &&
+           isfinite(effective_capacity) && effective_capacity > 0.0
+            push!(values, raw_saturation * base_capacity / effective_capacity)
+        end
+    end
+    return isempty(values) ? missing : mean(values)
+end
+
+function venture_ratio_mean(events, numerator_index::Int, denominator_index::Int)::Union{Missing,Float64}
+    values = Float64[]
+    for event in events
+        max(numerator_index, denominator_index) <= length(event) || continue
+        numerator = Float64(event[numerator_index])
+        denominator = Float64(event[denominator_index])
+        if isfinite(numerator) && isfinite(denominator) && denominator > 0.0
+            push!(values, numerator / denominator)
+        end
+    end
+    return isempty(values) ? missing : mean(values)
+end
+
 function history_mean(sim::EmergentSimulation, key::String)::Float64
     return finite_mean(get(h, key, nothing) for h in sim.history)
 end
@@ -324,6 +390,19 @@ high_crowding!(config::EmergentConfig) = (
 )
 free_ai!(config::EmergentConfig) = (config.AI_COST_INTENSITY = 0.0; nothing)
 double_ai_cost!(config::EmergentConfig) = (config.AI_COST_INTENSITY = 2.0; nothing)
+# Performative-demand post-hoc test: an opportunity's effective capacity (its
+# implicit customer demand) grows with the LAGGED collective dollar commitment
+# the niche attracted, making value/demand endogenous to prior collective action
+# rather than a fixed exogenous draw. COMMON = the enlarged demand is shared by
+# all founders in the niche; APPROPRIABLE = the uplift accrues to each founder in
+# proportion to their own commitment share (category ownership). Dose-response
+# over ψ ∈ {0.25, 0.5, 1.0}. All are no-ops when ELASTICITY stays 0 (baseline).
+performative_common_025!(config::EmergentConfig)      = (config.PERFORMATIVE_DEMAND_ELASTICITY = 0.25; config.PERFORMATIVE_DEMAND_APPROPRIABLE = false; nothing)
+performative_common_050!(config::EmergentConfig)      = (config.PERFORMATIVE_DEMAND_ELASTICITY = 0.50; config.PERFORMATIVE_DEMAND_APPROPRIABLE = false; nothing)
+performative_common_100!(config::EmergentConfig)      = (config.PERFORMATIVE_DEMAND_ELASTICITY = 1.00; config.PERFORMATIVE_DEMAND_APPROPRIABLE = false; nothing)
+performative_appropriable_025!(config::EmergentConfig) = (config.PERFORMATIVE_DEMAND_ELASTICITY = 0.25; config.PERFORMATIVE_DEMAND_APPROPRIABLE = true; nothing)
+performative_appropriable_050!(config::EmergentConfig) = (config.PERFORMATIVE_DEMAND_ELASTICITY = 0.50; config.PERFORMATIVE_DEMAND_APPROPRIABLE = true; nothing)
+performative_appropriable_100!(config::EmergentConfig) = (config.PERFORMATIVE_DEMAND_ELASTICITY = 1.00; config.PERFORMATIVE_DEMAND_APPROPRIABLE = true; nothing)
 # Idiosyncratic return-noise ablation/sweep (σ default 0.38; provenance and
 # threshold-asymmetry documented at RETURN_NOISE_SCALE in config.jl). σ=0
 # removes the execution-risk layer entirely; 0.19/0.57 bracket the default at
@@ -335,9 +414,9 @@ return_noise_low!(config::EmergentConfig) = (config.RETURN_NOISE_SCALE = 0.19; n
 return_noise_high!(config::EmergentConfig) = (config.RETURN_NOISE_SCALE = 0.57; nothing)
 novelty_generalization_stress_on!(config::EmergentConfig) = (config.NOVELTY_NOISE_INVERSION_FACTOR = 0.4; nothing)
 premium_exec_5x!(config::EmergentConfig) = (config.AI_EXECUTION_SUCCESS_MULTIPLIERS["premium"] = 5.0; nothing)
-# Tail/cost robustness setters. Return-tail fields are retained for legacy
-# UNICORN_TAIL comparison runs; under the current canonical model the same tail
-# cells also move the niche-size capacity tail so labels match the live mechanism.
+# Tail/cost robustness setters. Return-tail fields are retained for OPTION_B_TAIL
+# comparison runs; under the current canonical model the same tail cells also
+# move the niche-size capacity tail so labels match the live mechanism.
 frontier_exec_1_5x!(config::EmergentConfig) = (config.AI_EXECUTION_SUCCESS_MULTIPLIERS["premium"] = 1.5; nothing)
 frontier_exec_2x!(config::EmergentConfig)   = (config.AI_EXECUTION_SUCCESS_MULTIPLIERS["premium"] = 2.0; nothing)
 frontier_exec_3x!(config::EmergentConfig)   = (config.AI_EXECUTION_SUCCESS_MULTIPLIERS["premium"] = 3.0; nothing)
@@ -362,7 +441,7 @@ function moderate_tail!(config::EmergentConfig)
         config.RETURN_CLAMP_MAX = 25.0
         config.NICHE_SIZE_LOG_SIGMA = NICHE_MODERATE_SIGMA
     else
-        # Legacy option-B path: a moderate latent-RETURN tail.
+        # Option-B comparison path: a moderate latent-return tail.
         config.LOG_SIGMA_MULT = 2.5
         config.LOG_SIGMA_CAP = 2.0
         config.RETURN_RANGE_MAX_MULT = 50.0
@@ -376,16 +455,54 @@ ops_cost_100!(config::EmergentConfig) = (config.OPS_COST_INTENSITY = 1.00; nothi
 difficulty_scaled_ai_cost!(config::EmergentConfig) = (config.AI_DIFFICULTY_COST_SCALING = 1.0; nothing)
 ai_complementarity_on!(config::EmergentConfig) = (config.AI_COMPLEMENTARITY_STRENGTH = 1.0; nothing)
 
-# ── Robustness addendum: unaided-floor sweep, bias-free AI,
-#    wealth-scaled compute, and endogenous-adoption learning variants ────────
-# NO_AI_BIAS completes the pathology-removal family: hallucination and
-# overconfidence were already removable (NO_AI_ERRORS); the small systematic
-# bias term was not.
+# ── Addendum cells: unaided-floor sweep, bias-free AI, wealth-scaled compute,
+#    and endogenous-adoption learning variants ───────────────────────────────
+# NO_AI_BIAS isolates the small systematic bias term while leaving the
+# hallucination and overconfidence dials unchanged.
 no_ai_bias!(config::EmergentConfig) = (config.AI_BIAS_INTENSITY = 0.0; nothing)
 # Rich-get-richer marginal compute: visibility budget scales with
 # capital/initial_equity (clamped [0.25, 4.0]), uniformly across tiers; the
 # extra analyses are billed per use, so compute is bought at the margin.
 wealth_scaled_compute!(config::EmergentConfig) = (config.WEALTH_COMPUTE_SCALING = 1.0; nothing)
+
+# Previous payoff specification: blend 0.30 × the market-wide action-category
+# HHI into every opportunity's local I/K load. Pure outstanding-capital load is
+# now canonical because it has the cleaner productive-capacity interpretation;
+# this named cell preserves the prior equation as robustness.
+crowding_action_hhi_blend!(config::EmergentConfig) =
+    (config.CROWDING_INDEX_BLEND = 0.30; nothing)
+# Remove the created-opportunity scoring affinities (any-created ×1.1,
+# own-creation ×1.2 → both 1.0) so creation-channel convergence is tested
+# without the hard-coded attraction to founder-created niches.
+no_created_bonus!(config::EmergentConfig) = (config.CREATED_OPP_AFFINITY = 1.0;
+    config.OWN_CREATION_AFFINITY = 1.0; nothing)
+# Isolate per-opportunity founder/component fit without bundling it with the S2
+# comparative-advantage strategy rule.
+opportunity_component_fit_on!(config::EmergentConfig) =
+    (config.ENABLE_OPPORTUNITY_COMPONENTS = true; nothing)
+# Remove only background/public opportunity replenishment. Exploration niches
+# and innovation-spawned opportunities remain live, making the evolving option
+# set endogenous after initialization.
+endogenous_opportunities_only!(config::EmergentConfig) =
+    (config.ENABLE_BACKGROUND_OPPORTUNITY_REPLENISHMENT = false; nothing)
+# The historical exploration mechanism opened Uniform{1,2,3} related niches per
+# successful creation event. These cells expose and bracket that multiplicity;
+# FIXED_TWO is mean-preserving and removes only the draw's variance.
+niche_multiplicity_one!(config::EmergentConfig) = (
+    config.NICHE_OPPORTUNITIES_PER_DISCOVERY_MIN = 1;
+    config.NICHE_OPPORTUNITIES_PER_DISCOVERY_MAX = 1;
+    nothing
+)
+niche_multiplicity_fixed_two!(config::EmergentConfig) = (
+    config.NICHE_OPPORTUNITIES_PER_DISCOVERY_MIN = 2;
+    config.NICHE_OPPORTUNITIES_PER_DISCOVERY_MAX = 2;
+    nothing
+)
+niche_multiplicity_three!(config::EmergentConfig) = (
+    config.NICHE_OPPORTUNITIES_PER_DISCOVERY_MIN = 3;
+    config.NICHE_OPPORTUNITIES_PER_DISCOVERY_MAX = 3;
+    nothing
+)
 # Unaided-floor sweep: the no-AI tier's published characteristics (quality
 # 0.25 / breadth 0.20) are the one anchor the alternative-frontier sweeps
 # never moved. These cells bracket it in both directions, so the trap's
@@ -417,8 +534,8 @@ function no_hallucination_overconfidence!(config::EmergentConfig)
 end
 
 function cash_only_survival!(config::EmergentConfig)
-    # Counterfactual: legacy cash-on-hand survival rule (deployed capital does
-    # not count toward solvency). Measures the illiquidity contribution to the
+    # Counterfactual: cash-on-hand survival rule (deployed capital does not
+    # count toward solvency). Measures the illiquidity contribution to the
     # frontier trap relative to the net-worth default.
     config.SURVIVAL_COUNTS_INFLIGHT = false
     return nothing
@@ -544,18 +661,18 @@ function token_pricing_only!(config::EmergentConfig)
     return nothing
 end
 
-# Token-core migration (2026-06-11): the subscription-era architecture is the
-# robustness cell now that "token" is the struct default.
+# Subscription-era pricing is the robustness cell when "token" is the default
+# pricing model.
 function subscription_era!(config::EmergentConfig)
     config.AI_COST_MODEL = "hybrid"
     return nothing
 end
 
-# ── AGI strategy ladder (see the strategy-ladder design notes) ─────────────
-# Strategy strengths stay at their documented conservative defaults (1.0);
-# the conditions vary only the mode and the tier scope. FRONTIER_* answers
-# "would an AGI-level system persist in those errors?" with a curve; ALL_* is
-# the reflexivity-relocation test.
+# ── Strategy ladder ────────────────────────────────────────────────────────
+# Strategy strengths stay at conservative defaults (1.0); the conditions vary
+# only the mode and tier scope. FRONTIER_* cells test whether frontier agents
+# can strategically attenuate convergence, and ALL_* cells test whether
+# population-wide sophistication relocates or reduces crowding.
 function _strategy_ladder!(config::EmergentConfig, mode::String, tiers::Vector{String})
     config.STRATEGY_MODE = mode
     config.STRATEGY_TIERS = tiers
@@ -580,25 +697,21 @@ all_strategy_complement!(config::EmergentConfig) =
     _strategy_ladder!(config, "complement_seeking", ALL_STRATEGY_TIERS)
 all_strategy_composite!(config::EmergentConfig) =
     _strategy_ladder!(config, "agi_native", ALL_STRATEGY_TIERS)
-# S2 with the PER-OPPORTUNITY knowledge-component edge (2026-06-22): private-edge
-# re-ranking uses the agent's COMPONENT-knowledge overlap with each opportunity's
-# required components instead of the coarse sector-familiarity fallback. Relies on
-# the recombinant engine (DERIVED_GATE ~0.55, set in the NICHE_CANONICAL block).
+# S2 with the per-opportunity knowledge-component edge: private-edge re-ranking
+# uses the agent's component-knowledge overlap with each opportunity's required
+# components. Relies on the recombinant engine (DERIVED_GATE ~0.55).
 all_strategy_comparative_components!(config::EmergentConfig) =
     (_strategy_ladder!(config, "comparative_advantage", ALL_STRATEGY_TIERS);
      config.ENABLE_OPPORTUNITY_COMPONENTS = true; nothing)
 
-# ── Open-action extension (see the strategy-ladder design notes, open-action
-#    extension). A1 = abandonment option (per-round pivot review at an
-#    age-dependent haircut, default-off); A2 = Hayekian redirection of
-#    innovation sector selection away from perceived-crowded sectors
-#    (default-off). The conditions vary only the flags — and, for the maximal
-#    AGI-robustness cell, additionally the strategy ladder.
-# PIVOT_DETERIORATION_GAIN = 2.0 in every pivot-enabled cell: liveness-
-# calibrated by scripts/probe_pivot_liveness.jl (gain 1.0 = dead arm — the
-# trigger region is mostly unreachable; gain 2.0 → ~3.4% BASELINE / ~4.7%
-# HIGH-crowding pivot rates). The config default stays 1.0 (bit-identical
-# default runs); only these OPEN_ACTION_* conditions opt in.
+# ── Open-action extension ──────────────────────────────────────────────────
+# A1 = abandonment option (per-round pivot review at an age-dependent haircut,
+# default-off); A2 = Hayekian redirection of innovation sector selection away
+# from perceived-crowded sectors (default-off). The conditions vary only these
+# flags, and the maximal cell additionally activates the strategy ladder.
+# PIVOT_DETERIORATION_GAIN = 2.0 in every pivot-enabled cell, calibrated by
+# scripts/probe_pivot_liveness.jl to make the trigger region reachable while
+# preserving bit-identical default runs.
 function open_action_pivot!(config::EmergentConfig)
     config.ENABLE_PIVOT = true
     config.PIVOT_DETERIORATION_GAIN = 2.0
@@ -619,17 +732,9 @@ function open_action_agi_native_market!(config::EmergentConfig)
     return nothing
 end
 
-# ── Dose-response sweeps (strategy-proof vs strategy-resistant) ─────────────
-# An earlier ladder run left the
-# frontier trap (−18.5pp) essentially unmoved at the documented default
-# strengths (attenuation 0–1.4pp; the largest-single-share prediction
-# falsified) and the pivot
-# arm nearly dead at N=1000 despite gain 2.0 being liveness-calibrated at
-# N=64 (deterioration swings compress with population size). The open
-# question those results leave: is the trap strategy-PROOF (no
-# expressible dose attenuates it) or merely strategy-RESISTANT (the default
-# dials were too gentle)? These cells sweep each dial to its maximum
-# EFFECTIVE value, where "effective" is bounded by the use-site clamps:
+# ── Dose-response sweeps ───────────────────────────────────────────────────
+# These cells sweep strategy and pivot dials to their maximum effective values,
+# where "effective" is bounded by the use-site clamps:
 #   S1 STRATEGY_CONSENSUS_DISCOUNT — clamped to [0,1] at the use site
 #     (strategy_shaded_return, src/strategy.jl); the DEFAULT 1.0 is ALREADY
 #     the ceiling, so S1 has no dose headroom: any raw value above 1.0 is
@@ -646,12 +751,10 @@ end
 #   PIVOT_DETERIORATION_GAIN — validated ≥ 0, unbounded above; the trigger
 #     d_eff = clamp(deterioration × conviction × gain, 0, 1) saturates at 1.
 #     Gains 4.0 / 8.0 map progressively more of the observed deterioration
-#     range into the trigger region (pivot-channel scale recalibration: the N=64
-#     liveness probe's gain 2.0 gave ~3–5% pivot rates that compress to
-#     near-zero at N=1000).
+#     range into the trigger region for production-scale populations.
 function _max_strategy_strengths!(config::EmergentConfig)
     # Max-effective doses given the use-site clamps documented above. S1 is
-    # already saturated at the default; set explicitly for provenance.
+    # saturated at the default and is set explicitly.
     config.STRATEGY_CONSENSUS_DISCOUNT = 1.0
     config.STRATEGY_EDGE_WEIGHT = 2.0
     config.STRATEGY_COMPLEMENT_SHIFT = 2.0
@@ -690,10 +793,9 @@ end
 dose_pivot_gain_4x!(config::EmergentConfig) = _dose_pivot_gain!(config, 4.0)
 dose_pivot_gain_8x!(config::EmergentConfig) = _dose_pivot_gain!(config, 8.0)
 function dose_open_composite_max!(config::EmergentConfig)
-    # Maximal-dose version of the strongest-claim cell: pivot at gain 8.0, directed
-    # creation at its DEFAULT mixture strength (A2 was never the gentle
-    # dial — keeping it pinned preserves comparability with the open-action cells), and
-    # population-wide agi_native at the max-effective strategy strengths.
+    # Maximal-dose open-action cell: pivot at gain 8.0, directed creation at
+    # its default mixture strength, and population-wide agi_native at the
+    # max-effective strategy strengths.
     _dose_pivot_gain!(config, 8.0)
     config.ENABLE_DIRECTED_CREATION = true
     _strategy_ladder!(config, "agi_native", ALL_STRATEGY_TIERS)
@@ -701,12 +803,10 @@ function dose_open_composite_max!(config::EmergentConfig)
     return nothing
 end
 
-# ── Emergence audit extension (see the strategy-ladder design notes,
-#    emergence-audit extension) ───────────────────────────────────────────
-# Two mechanism dials motivated by the flatness question (the TE
-# responds strongly to epistemic/economic environment interventions, barely
-# to agent behavior). AI_ERROR_CORRELATION (rho) decouples signal COMMONALITY
-# from signal QUALITY: the continuous estimate error becomes
+# ── Emergence mechanism extension ──────────────────────────────────────────
+# Two mechanism dials separate signal commonality and decision mixing.
+# AI_ERROR_CORRELATION (rho) decouples signal COMMONALITY from signal QUALITY:
+# the continuous estimate error becomes
 # sqrt(rho)*eps_common(opp, round, tier) + sqrt(1-rho)*eps_idio with total
 # variance preserved, so estimate accuracy is invariant in rho BY
 # CONSTRUCTION (variance algebra at the config field, src/config.jl).
@@ -725,6 +825,21 @@ function market_slack_high_capacity!(config::EmergentConfig)
     config.CROWDING_STRENGTH_LAMBDA = 0.75
     return nothing
 end
+
+# One-factor capacity-mean cells: unlike MARKET_SLACK_HIGH_CAPACITY and
+# MARKET_DENSE_LOW_CAPACITY, these hold κ, λ, γ, tail dispersion, and every
+# other mechanism fixed. They identify whether the dollar capacity scale alone
+# manufactures the tier contrast.
+capacity_mean_half!(config::EmergentConfig) =
+    (config.OPPORTUNITY_BASE_CAPACITY *= 0.5; nothing)
+capacity_mean_double!(config::EmergentConfig) =
+    (config.OPPORTUNITY_BASE_CAPACITY *= 2.0; nothing)
+# Rational-response robustness: agents fully price the currently visible local
+# I/K penalty when ranking opportunities. They still cannot observe rivals'
+# simultaneous commitments, so any residual crowding is an equilibrium timing
+# effect rather than blindness to the existing load.
+capacity_aware_selection!(config::EmergentConfig) =
+    (config.DECISION_CROWDING_AVERSION_WEIGHT = 1.0; nothing)
 
 function market_dense_low_capacity!(config::EmergentConfig)
     config.OPPORTUNITY_BASE_CAPACITY *= 0.60
@@ -745,7 +860,7 @@ function opportunity_sparse_environment!(config::EmergentConfig)
     return nothing
 end
 
-# Sector-composition robustness (added 2026-06-19). SECTOR_WEIGHTS drives the
+# Sector-composition robustness. SECTOR_WEIGHTS drives the
 # per-agent home-sector draw (_sample_sector_weighted, agents.jl); the canonical
 # baseline is the NVCA-weighted 60/15/15/10 (tech/service/manufacturing/retail).
 # These two cells bracket that weighting to test whether the headline deficit is
@@ -776,14 +891,14 @@ function build_config(condition::RobustnessCondition, seed::Int)
         RANDOM_SEED = seed,
         AGENT_AI_MODE = condition.design == "emergent" ? "emergent" : "fixed",
     )
-    if UNICORN_TAIL
+    if OPTION_B_TAIL
         # Option-B heavy-tail baseline applied to EVERY condition BEFORE its mutator,
         # so TRUNCATED_TAIL / MODERATE_TAIL / OPS_COST_* can override these fields.
-        config.LOG_SIGMA_MULT = UT_SIGMA_MULT
-        config.LOG_SIGMA_CAP = UT_SIGMA_CAP
-        config.RETURN_RANGE_MAX_MULT = UT_RANGE_MULT
-        config.RETURN_CLAMP_MAX = UT_CLAMP_MAX
-        config.OPS_COST_INTENSITY = UT_OPS
+        config.LOG_SIGMA_MULT = B_SIGMA_MULT
+        config.LOG_SIGMA_CAP = B_SIGMA_CAP
+        config.RETURN_RANGE_MAX_MULT = B_RANGE_MULT
+        config.RETURN_CLAMP_MAX = B_CLAMP_MAX
+        config.OPS_COST_INTENSITY = B_OPS
     end
     if HEAVY_TAIL_RETURNS
         # Realized returns AND perceived estimates track the full latent tail (bounded
@@ -794,21 +909,14 @@ function build_config(condition::RobustnessCondition, seed::Int)
         config.OPPORTUNITY_RETURN_RANGE = (config.OPPORTUNITY_RETURN_RANGE[1], config.RETURN_CLAMP_MAX)
     end
     if NICHE_CANONICAL
-        # Canonical model (2026-06-15): realistic opportunity returns (the raw sector
-        # economics — no inflation, HEAVY_TAIL_RETURNS off) with the venture-realistic
-        # heavy tail relocated to niche/market SIZE, applied BEFORE the condition mutator
-        # so cells can override. ops sets aggregate survival to the venture band.
+        # Canonical model: realistic opportunity returns with the venture-like
+        # heavy tail represented as niche/market size, applied before the
+        # condition mutator so cells can override.
         config.NICHE_SIZE_LOG_SIGMA = NICHE_SIGMA
         config.OPS_COST_INTENSITY = NICHE_OPS
-        # Un-deadlock the recombinant-knowledge engine (2026-06-22): base-only
-        # innovation quality maxes near 0.61, below the legacy 0.7 derived-knowledge
-        # gate, so successful recombination almost never minted new knowledge and the
-        # pool grew only via failure residue. 0.55 lets above-average recombinations
-        # mint derived components, igniting the Weitzman/Schumpeterian growth loop.
-        # Verified at full scale (gate 0.7→0.55): pooled survival 0.72→0.70 (still in
-        # the venture band) and the frontier deficit unchanged within noise, while
-        # derived_* 50→773 and mean component level 0.43→0.62. Applied before the
-        # condition mutator so cells can override.
+        # The recombinant-knowledge gate lets above-average recombinations mint
+        # derived components and support cumulative knowledge growth. Applied
+        # before the condition mutator so cells can override.
         config.DERIVED_KNOWLEDGE_QUALITY_GATE = DERIVED_GATE
     end
     condition.apply!(config)
@@ -828,7 +936,7 @@ function effective_config_rows(conditions::Vector{RobustnessCondition}, seed::In
             category = condition.category,
             design = condition.design,
             preset = condition.preset,
-            unicorn_tail_env = UNICORN_TAIL,
+            option_b_tail_env = OPTION_B_TAIL,
             heavy_tail_returns_env = HEAVY_TAIL_RETURNS,
             niche_canonical_env = NICHE_CANONICAL,
             tail_model = tail_model,
@@ -840,10 +948,24 @@ function effective_config_rows(conditions::Vector{RobustnessCondition}, seed::In
             niche_size_log_sigma = cfg.NICHE_SIZE_LOG_SIGMA,
             opportunity_base_capacity = cfg.OPPORTUNITY_BASE_CAPACITY,
             opportunity_capacity_variance = cfg.OPPORTUNITY_CAPACITY_VARIANCE,
+            crowding_index_blend = cfg.CROWDING_INDEX_BLEND,
+            performative_demand_elasticity =
+                cfg.PERFORMATIVE_DEMAND_ELASTICITY,
+            performative_demand_appropriable =
+                cfg.PERFORMATIVE_DEMAND_APPROPRIABLE,
+            decision_crowding_aversion_weight =
+                cfg.DECISION_CROWDING_AVERSION_WEIGHT,
             ops_cost_intensity = cfg.OPS_COST_INTENSITY,
             crowding_capacity_ratio_k = cfg.CROWDING_CAPACITY_RATIO_K,
             crowding_strength_lambda = cfg.CROWDING_STRENGTH_LAMBDA,
             crowding_convexity_gamma = cfg.CROWDING_CONVEXITY_GAMMA,
+            background_opportunity_replenishment =
+                cfg.ENABLE_BACKGROUND_OPPORTUNITY_REPLENISHMENT,
+            niche_opportunities_per_discovery_min =
+                cfg.NICHE_OPPORTUNITIES_PER_DISCOVERY_MIN,
+            niche_opportunities_per_discovery_max =
+                cfg.NICHE_OPPORTUNITIES_PER_DISCOVERY_MAX,
+            opportunity_component_fit = cfg.ENABLE_OPPORTUNITY_COMPONENTS,
         ))
     end
     return DataFrame(rows)
@@ -890,16 +1012,35 @@ function run_one(condition::RobustnessCondition, run_idx::Int)
     end
     if VENTURE_PANEL && condition.name in ("BASELINE", "SHAM_AI_LABELS_FREE",
             "NO_INFORMATION_ADVANTAGE_FREE", "NO_CROWDING", "SHARED_AI_ERRORS",
-            "FRONTIER_REASONING_NO_ERROR")
+            "FRONTIER_REASONING_NO_ERROR", "CROWDING_ACTION_HHI_BLEND",
+            "NO_CREATED_BONUS", "OPPORTUNITY_COMPONENT_FIT_ON",
+            "ENDOGENOUS_OPPORTUNITIES_ONLY", "NICHE_MULTIPLICITY_ONE",
+            "NICHE_MULTIPLICITY_FIXED_TWO", "NICHE_MULTIPLICITY_THREE",
+            "CAPACITY_MEAN_HALF", "CAPACITY_MEAN_DOUBLE",
+            "CAPACITY_AWARE_SELECTION",
+            "PERFORMATIVE_COMMON_025", "PERFORMATIVE_COMMON_050",
+            "PERFORMATIVE_COMMON_100", "PERFORMATIVE_APPROPRIABLE_025",
+            "PERFORMATIVE_APPROPRIABLE_050", "PERFORMATIVE_APPROPRIABLE_100",
+            "WEALTH_SCALED_COMPUTE", "FRONTIER_QUALITY_PLUS50")
         # Panel for the value-capture + creation-convergence analysis: baseline (the
         # central result), the two placebos (the trap must flatten without a real AI
-        # advantage), the crowding knockout, and the error-structure cells.
+        # advantage), the crowding knockout, the error-structure cells, and the
+        # supplemental capacity, creation, and payoff-specification cells whose
+        # saturation, created-niche, and self-created metrics feed the mechanism
+        # tables. FRONTIER_QUALITY_PLUS50 joins the set for
+        # the innovation-success outcome family (Tier A): it is the
+        # quality-boost counterfactual for the innovate channel.
         write_venture_panel(condition, sim, run_idx, seed)
+        # Tier A companions: per-innovation and end-of-run niche panels for the
+        # innovation-success + financial-performance outcome families.
+        write_innovation_panel(condition, sim, run_idx, seed)
+        write_niche_panel(condition, sim, run_idx, seed)
+        write_opportunity_event_panels(condition, sim, run_idx, seed)
     end
     return summarize_simulation(condition, sim, run_idx, seed)
 end
 
-# ── Adoption telemetry (endogenous-adoption family, 2026-06-11) ─────────────
+# ── Adoption telemetry ─────────────────────────────────────────────────────
 # Per-run files under OUTPUT_DIR/adoption/, one pair per (condition, run):
 # unique filenames mean no cross-thread locking and a partial suite still
 # leaves complete per-run records. Trajectories come from the round history's
@@ -988,14 +1129,40 @@ function write_venture_panel(
     rows = Dict{Symbol,Any}[]
     rows_raw = Dict{Symbol,Any}[]   # per-investment ledger for the upstream paradox (sight/convergence/yield)
     for agent in sim.agents
-        led = agent.venture_ledger      # (realized_mult, crowding, ai_est, opp_latent, amount, round, is_created, opp_capacity)
+        led = agent.venture_ledger      # realized/capture + entry→maturity capital-load trace
         agent_tier = GlimpseABM.get_ai_level(agent)
         for t in led
+            saturation_entry = t[10]
+            saturation_maturity = t[11]
+            action_hhi_maturity = t[12]
+            effective_saturation_maturity =
+                isfinite(t[17]) && t[17] > 0.0 ?
+                saturation_maturity * t[8] / t[17] : saturation_maturity
+            effective_load = effective_saturation_maturity +
+                sim.config.CROWDING_INDEX_BLEND * action_hhi_maturity
+            post_commitment_rival_ratio = isfinite(t[8]) && t[8] > 0.0 ?
+                t[14] / t[8] : NaN
             push!(rows_raw, Dict{Symbol,Any}(
                 :condition => condition.name, :run_idx => run_idx, :seed => seed,
                 :agent_id => agent.id, :tier => agent_tier, :survived => agent.alive,
                 :realized => t[1], :crowding => t[2], :ai_estimate => t[3], :latent => t[4],
-                :amount => t[5], :round => t[6], :is_created => t[7], :capacity => t[8]))
+                :amount => t[5], :round => t[6], :is_created => t[7], :capacity => t[8],
+                :self_created => length(t) >= 9 ? t[9] : 0.0,
+                :capacity_saturation_at_entry => saturation_entry,
+                :capacity_saturation_at_maturity => saturation_maturity,
+                :effective_capacity_saturation_at_maturity =>
+                    effective_saturation_maturity,
+                :capacity_saturation_change => t[13],
+                :post_commitment_rival_capital => t[14],
+                :post_commitment_rival_capacity_ratio => post_commitment_rival_ratio,
+                :action_hhi_at_maturity => action_hhi_maturity,
+                :effective_capacity_load => effective_load,
+                :crowding_return_multiplier => t[15],
+                :realized_latent_capture => t[16],
+                :performative_effective_capacity => t[17],
+                :performative_lagged_commitment => t[18],
+                :performative_commitment_share => t[19],
+                :performative_uplift_fraction => t[20]))
         end
         rms = Float64[t[1] for t in led]
         lats = Float64[t[4] for t in led]
@@ -1019,6 +1186,23 @@ function write_venture_panel(
         mean_capacity(v) = (w = Float64[t[8] for t in v if isfinite(t[8]) && t[8] > 0.0]; isempty(w) ? NaN : sum(w) / length(w))
         ie = agent.resources.performance.initial_equity
         fc = agent.resources.capital
+        # Tier A additions (2026-07-07): innovation-channel outcomes + per-founder
+        # balance-sheet position. Read-only views of existing agent state —
+        # PerformanceTracker cumulative flows, uncertainty_metrics innovation
+        # vectors, and active_investments in-flight capital. No engine change.
+        perf = agent.resources.performance
+        innovate_deployed = get(perf.deployed_by_action, "innovate", 0.0)
+        innovate_returned = get(perf.returned_by_action, "innovate", 0.0)
+        invest_deployed = get(perf.deployed_by_action, "invest", 0.0)
+        invest_returned = get(perf.returned_by_action, "invest", 0.0)
+        explore_spent = get(perf.deployed_by_action, "explore", 0.0)
+        overall_deployed = get(perf.deployed_by_action, "overall", 0.0)
+        overall_returned = get(perf.returned_by_action, "overall", 0.0)
+        in_flight = isempty(agent.active_investments) ? 0.0 :
+            sum(Float64(inv["amount"]) for inv in agent.active_investments)
+        qual_v = agent.uncertainty_metrics.innovation_qualities
+        nov_v = agent.uncertainty_metrics.innovation_novelties
+        scar_v = agent.uncertainty_metrics.innovation_scarcities
         push!(rows, Dict{Symbol,Any}(
             :condition => condition.name,
             :run_idx => run_idx,
@@ -1064,6 +1248,21 @@ function write_venture_panel(
             :best_inv_amount => best_amt,
             :best_inv_capacity => best_cap,
             :mean_crowding => isempty(led) ? NaN : sum(t[2] for t in led) / length(led),
+            :mean_capacity_saturation_at_entry => venture_metric_mean(led, 10),
+            :mean_capacity_saturation_at_maturity => venture_metric_mean(led, 11),
+            :mean_effective_capacity_saturation_at_maturity =>
+                venture_effective_saturation_mean(led),
+            :mean_capacity_saturation_change => venture_metric_mean(led, 13),
+            :mean_post_commitment_rival_capital => venture_metric_mean(led, 14),
+            :mean_post_commitment_rival_capacity_ratio => venture_ratio_mean(led, 14, 8),
+            :mean_crowding_return_multiplier => venture_metric_mean(led, 15),
+            :mean_realized_latent_capture => venture_metric_mean(led, 16),
+            :mean_performative_effective_capacity => venture_metric_mean(led, 17),
+            :mean_performative_lagged_commitment => venture_metric_mean(led, 18),
+            :mean_performative_commitment_share => venture_metric_mean(led, 19),
+            :mean_performative_uplift_fraction => venture_metric_mean(led, 20),
+            :post_commitment_rival_incidence => isempty(led) ? missing :
+                count(t -> isfinite(t[14]) && t[14] > 0.0, led) / length(led),
             # Return-capture efficiency + canonical capacity tail + creation re-convergence.
             :return_capture_mean => isempty(vcs) ? NaN : sum(vcs) / length(vcs),
             :value_capture_mean => isempty(vcs) ? NaN : sum(vcs) / length(vcs),
@@ -1074,6 +1273,46 @@ function write_venture_panel(
             :vc_endowed => cap_vc(endo),
             :capacity_created => mean_capacity(cre),
             :capacity_endowed => mean_capacity(endo),
+            # ── Tier A: innovation-channel outcomes ─────────────────────────
+            # innovation_count counts ATTEMPTS (including no-viable-combination
+            # attempts that created no Innovation object); hit rate is the
+            # per-founder success share of attempts. Quality/novelty/scarcity
+            # vectors cover created innovations only (engine path).
+            :innovation_count => agent.innovation_count,
+            :innovation_success_count => agent.innovation_success_count,
+            :innovation_failure_count => agent.innovation_failure_count,
+            :innovation_hit_rate => agent.innovation_count > 0 ?
+                agent.innovation_success_count / agent.innovation_count : NaN,
+            :mean_innovation_quality => isempty(qual_v) ? NaN : sum(qual_v) / length(qual_v),
+            :max_innovation_quality => isempty(qual_v) ? NaN : maximum(qual_v),
+            :mean_innovation_novelty => isempty(nov_v) ? NaN : sum(nov_v) / length(nov_v),
+            :max_innovation_novelty => isempty(nov_v) ? NaN : maximum(nov_v),
+            :mean_innovation_scarcity => isempty(scar_v) ? NaN : sum(scar_v) / length(scar_v),
+            :niches_discovered => agent.uncertainty_metrics.niches_discovered,
+            :new_combinations_created => agent.uncertainty_metrics.new_combinations_created,
+            :derivative_adoptions => agent.uncertainty_metrics.derivative_adoptions,
+            # ── Tier A: financial performance ───────────────────────────────
+            # Channel-split CUMULATIVE capital flows from the PerformanceTracker
+            # (unlike the round-level history ROIC, numerator and denominator
+            # windows match here). ROIC is NaN when the channel deployed nothing.
+            # net_worth = cash + in-flight (deployed, not-yet-matured) capital —
+            # the net-worth solvency rule's wealth concept; wealth_multiple
+            # above remains the cash-only multiple.
+            :innovate_deployed => innovate_deployed,
+            :innovate_returned => innovate_returned,
+            :innovate_roic => innovate_deployed > 0.0 ?
+                (innovate_returned - innovate_deployed) / innovate_deployed : NaN,
+            :invest_deployed => invest_deployed,
+            :invest_returned => invest_returned,
+            :invest_roic => invest_deployed > 0.0 ?
+                (invest_returned - invest_deployed) / invest_deployed : NaN,
+            :explore_spent => explore_spent,
+            :overall_roic => overall_deployed > 0.0 ?
+                (overall_returned - overall_deployed) / overall_deployed : NaN,
+            :in_flight_capital => in_flight,
+            :net_worth => fc + in_flight,
+            :net_worth_multiple => ie > 0.0 ? (fc + in_flight) / ie : NaN,
+            :ai_usage_count => agent.ai_usage_count,
         ))
     end
     if !isempty(rows)
@@ -1084,6 +1323,248 @@ function write_venture_panel(
         CSV.write(joinpath(panel_dir,
             "$(condition.name)_run$(run_tag)_ledger.csv"), DataFrame(rows_raw))
     end
+    return nothing
+end
+
+# Per-innovation panel (Tier A, 2026-07-07): one row per Innovation object
+# created during the run. Innovation attempts that failed to assemble a viable
+# knowledge combination create no Innovation object — they appear only in the
+# venture panel's innovation_count/innovation_failure_count, so this panel's
+# per-creator row count is ≤ that agent's innovation_count while its success
+# rows match innovation_success_count exactly.
+#
+# success/market_impact are set at evaluation time by
+# evaluate_innovation_success! on the engine's stored object. cash_multiple is
+# NOT stored on the engine's copy (only on the spawn-side duplicate built in
+# simulation.jl step!), so R&D spend and realized cash are joined from the
+# creator's PerformanceTracker roi_events instead: an agent takes at most one
+# action per round, so (creator_id, round, action="innovate") uniquely keys one
+# deployment/return pair, and realized_cash / rd_spend reproduces the
+# evaluate_innovation_success! cash multiple exactly
+# (innovation_return = rd_spend × cash_multiple in _execute_innovate!).
+function write_innovation_panel(
+    condition::RobustnessCondition,
+    sim::EmergentSimulation,
+    run_idx::Int,
+    seed::Int,
+)
+    panel_dir = joinpath(OUTPUT_DIR, "venture_panel")
+    isdir(panel_dir) || mkpath(panel_dir)
+    run_tag = lpad(run_idx, 3, '0')
+
+    # (agent_id, round) → innovate-channel deployment / return totals from the
+    # round-stamped roi_events log.
+    spend_by_agent_round = Dict{Tuple{Int,Int},Float64}()
+    cash_by_agent_round = Dict{Tuple{Int,Int},Float64}()
+    for agent in sim.agents
+        for ev in agent.resources.performance.roi_events
+            get(ev, "action", "") == "innovate" || continue
+            rnd = get(ev, "round", nothing)
+            rnd isa Integer || continue
+            key = (agent.id, Int(rnd))
+            amt = Float64(get(ev, "amount", 0.0))
+            ev_type = get(ev, "type", "")
+            if ev_type == "deployment"
+                spend_by_agent_round[key] = get(spend_by_agent_round, key, 0.0) + amt
+            elseif ev_type == "return"
+                cash_by_agent_round[key] = get(cash_by_agent_round, key, 0.0) + amt
+            end
+        end
+    end
+
+    agent_by_id = Dict(a.id => a for a in sim.agents)
+    rows = Dict{Symbol,Any}[]
+    for innov in values(sim.innovation_engine.innovations)
+        creator = get(agent_by_id, innov.creator_id, nothing)
+        key = (innov.creator_id, innov.round_created)
+        rd_spend = get(spend_by_agent_round, key, NaN)
+        realized = get(cash_by_agent_round, key, NaN)
+        push!(rows, Dict{Symbol,Any}(
+            :condition => condition.name,
+            :run_idx => run_idx,
+            :seed => seed,
+            :innovation_id => innov.id,
+            :creator_id => innov.creator_id,
+            # creator_tier is the design's treatment assignment (fixed tier in
+            # fixed_mixed); ai_level_used is the tier the agent actually used
+            # for THIS attempt (identical under fixed designs, informative in
+            # emergent-adoption designs).
+            :creator_tier => isnothing(creator) ? missing : GlimpseABM.get_ai_level(creator),
+            :creator_survived => isnothing(creator) ? missing : creator.alive,
+            :round_created => innov.round_created,
+            :type => innov.type,
+            :quality => innov.quality,
+            :novelty => innov.novelty,
+            :scarcity => something(innov.scarcity, NaN),
+            :success => innov.success === nothing ? missing : Bool(innov.success),
+            :market_impact => something(innov.market_impact, NaN),
+            :ai_level_used => innov.ai_level_used,
+            :ai_assisted => innov.ai_assisted,
+            :is_new_combination => innov.is_new_combination,
+            :sector => something(innov.sector, "unsectored"),
+            :n_components => length(innov.knowledge_components),
+            :combination_signature => something(innov.combination_signature, ""),
+            :rd_spend => rd_spend,
+            :realized_cash => realized,
+            :realized_cash_multiple => (isfinite(rd_spend) && rd_spend > 0.0 && isfinite(realized)) ?
+                realized / rd_spend : NaN,
+        ))
+    end
+    if !isempty(rows)
+        CSV.write(joinpath(panel_dir,
+            "$(condition.name)_run$(run_tag)_innovations.csv"), DataFrame(rows))
+    end
+    return nothing
+end
+
+# End-of-run opportunity panel (Tier A, 2026-07-07): one row per opportunity
+# still on the market at the final round, flagged created (founder niche /
+# innovation spawn — the is_created rule mirrors agents.jl venture-ledger
+# tagging) vs endowed, with full creation lineage (origin_innovation_id,
+# created_by) for innovation→commercialization attribution.
+#
+# SURVIVORSHIP CAVEAT: market maintenance culls opportunities mid-run
+# (zero-demand at age>10; low-competition at age>20 when competition dynamics
+# are on; age>80 low-competition in clear_old_opportunities!), so this panel
+# reflects opportunities that stayed active, not all opportunities ever
+# created. The append-only *_opportunity_flows.csv and *_commitments.csv files
+# preserve the full stock-flow history; use THIS panel only for end-state niche
+# structure and treat measures computed from it as conditional on niche survival.
+function write_niche_panel(
+    condition::RobustnessCondition,
+    sim::EmergentSimulation,
+    run_idx::Int,
+    seed::Int,
+)
+    panel_dir = joinpath(OUTPUT_DIR, "venture_panel")
+    isdir(panel_dir) || mkpath(panel_dir)
+    run_tag = lpad(run_idx, 3, '0')
+
+    agent_by_id = Dict(a.id => a for a in sim.agents)
+    rows = Dict{Symbol,Any}[]
+    for opp in sim.market.opportunities
+        is_created = startswith(opp.id, "niche_") || startswith(opp.id, "spawn_") ||
+            opp.origin_innovation_id !== nothing
+        creator = opp.created_by === nothing ? nothing :
+            get(agent_by_id, opp.created_by, nothing)
+        rr = opp.realized_returns
+        push!(rows, Dict{Symbol,Any}(
+            :condition => condition.name,
+            :run_idx => run_idx,
+            :seed => seed,
+            :opp_id => opp.id,
+            :is_created => is_created,
+            :origin_innovation_id => something(opp.origin_innovation_id, ""),
+            :created_by => opp.created_by === nothing ? missing : opp.created_by,
+            :creator_tier => creator === nothing ? missing : GlimpseABM.get_ai_level(creator),
+            :sector => something(opp.sector, "unsectored"),
+            :discovery_round => opp.discovery_round === nothing ? missing : opp.discovery_round,
+            :age => opp.age,
+            :capacity => opp.capacity,
+            :total_invested => opp.total_invested,
+            :saturation => opp.capacity > 0.0 ? opp.total_invested / opp.capacity : NaN,
+            :n_capital_events => length(opp.capital_history),
+            :n_realized => length(rr),
+            :mean_realized_return => isempty(rr) ? NaN : sum(rr) / length(rr),
+            :max_realized_return => isempty(rr) ? NaN : maximum(rr),
+            :latent_return_potential => opp.latent_return_potential,
+            :latent_failure_potential => something(opp.latent_failure_potential, NaN),
+            :novelty_score => opp.novelty_score,
+            :component_scarcity => opp.component_scarcity,
+            :competition => opp.competition,
+            :market_impact => opp.market_impact,
+            :truly_unknown => opp.truly_unknown,
+        ))
+    end
+    if !isempty(rows)
+        CSV.write(joinpath(panel_dir,
+            "$(condition.name)_run$(run_tag)_niches.csv"), DataFrame(rows))
+    end
+    return nothing
+end
+
+# Complete stock-flow and commitment ledgers. Unlike the end-of-run niche
+# panel, these survive opportunity culling. The commitment sequence is local to
+# an opportunity and therefore preserves later same-round rival commitments.
+function write_opportunity_event_panels(
+    condition::RobustnessCondition,
+    sim::EmergentSimulation,
+    run_idx::Int,
+    seed::Int,
+)
+    panel_dir = joinpath(OUTPUT_DIR, "venture_panel")
+    isdir(panel_dir) || mkpath(panel_dir)
+    run_tag = lpad(run_idx, 3, '0')
+
+    flow_rows = Dict{Symbol,Any}[]
+    for event in sim.market.opportunity_flow_events
+        push!(flow_rows, Dict{Symbol,Any}(
+            :condition => condition.name,
+            :run_idx => run_idx,
+            :seed => seed,
+            :round => event.round,
+            :event_type => event.event_type,
+            :source => event.source,
+            :opportunity_id => event.opportunity_id,
+            :creator_id => something(event.creator_id, missing),
+            :origin_innovation_id => something(event.origin_innovation_id, ""),
+            :sector => event.sector,
+            :reason => event.reason,
+            :capacity => event.capacity,
+            :outstanding_capital => event.outstanding_capital,
+        ))
+    end
+    flow_df = isempty(flow_rows) ? DataFrame(
+        condition=String[], run_idx=Int[], seed=Int[], round=Int[],
+        event_type=String[], source=String[], opportunity_id=String[],
+        creator_id=Union{Missing,Int}[], origin_innovation_id=String[],
+        sector=String[], reason=String[], capacity=Float64[],
+        outstanding_capital=Float64[],
+    ) : DataFrame(flow_rows)
+    CSV.write(joinpath(panel_dir,
+        "$(condition.name)_run$(run_tag)_opportunity_flows.csv"), flow_df)
+
+    commitment_events = GlimpseABM.OpportunityCommitmentEvent[]
+    for events in values(sim.market.opportunity_commitment_events)
+        append!(commitment_events, events)
+    end
+    sort!(commitment_events; by=event ->
+        (event.round, event.opportunity_id, event.sequence, event.agent_id))
+    commitment_rows = Dict{Symbol,Any}[]
+    for event in commitment_events
+        push!(commitment_rows, Dict{Symbol,Any}(
+            :condition => condition.name,
+            :run_idx => run_idx,
+            :seed => seed,
+            :round => event.round,
+            :opportunity_id => event.opportunity_id,
+            :opportunity_sequence => event.sequence,
+            :agent_id => event.agent_id,
+            :tier => event.tier,
+            :amount => event.amount,
+            :capacity => event.capacity,
+            :outstanding_after => event.outstanding_after,
+            :capacity_saturation_at_entry =>
+                event.entry_investment_capacity_ratio,
+            :latent_return_potential => event.latent_return_potential,
+            :instrument_estimated_return =>
+                event.instrument_estimated_return,
+            :decision_estimated_return => event.decision_estimated_return,
+            :is_created => event.is_created,
+            :self_created => event.self_created,
+        ))
+    end
+    commitment_df = isempty(commitment_rows) ? DataFrame(
+        condition=String[], run_idx=Int[], seed=Int[], round=Int[],
+        opportunity_id=String[], opportunity_sequence=Int[], agent_id=Int[],
+        tier=String[], amount=Float64[], capacity=Float64[],
+        outstanding_after=Float64[], capacity_saturation_at_entry=Float64[],
+        latent_return_potential=Float64[], instrument_estimated_return=Float64[],
+        decision_estimated_return=Float64[], is_created=Bool[],
+        self_created=Bool[],
+    ) : DataFrame(commitment_rows)
+    CSV.write(joinpath(panel_dir,
+        "$(condition.name)_run$(run_tag)_commitments.csv"), commitment_df)
     return nothing
 end
 
@@ -1108,11 +1589,10 @@ function summarize_simulation(condition::RobustnessCondition, sim::EmergentSimul
         key => history_mean(sim, key)
         for key in MARKET_RECURSION_DIAGNOSTIC_KEYS
     )
-    # ── Open-action (pivot / directed-creation) per-run telemetry ──────────
-    # Population-level end-of-run measures so the pivot and
-    # directed-creation / supply-elasticity predictions are evaluable
-    # from suite outputs alone. Schema is identical across conditions: with
-    # ENABLE_PIVOT / ENABLE_DIRECTED_CREATION off these counts/totals are
+    # ── Open-action (P6/P7) per-run telemetry ──────────────────────────────
+    # Population-level end-of-run measures for the pivot and directed-creation
+    # mechanisms. Schema is identical across conditions: with ENABLE_PIVOT /
+    # ENABLE_DIRECTED_CREATION off these counts/totals are
     # genuinely zero (zero events is data, not missingness); only the pivot
     # recovery RATE — NaN on zero-pivot rounds in compile_round_stats — is
     # aggregated through finite_mean so all-NaN runs do not deflate to a fake
@@ -1141,12 +1621,13 @@ function summarize_simulation(condition::RobustnessCondition, sim::EmergentSimul
     spawn_sector_hhi = n_spawned > 0 ?
         sum((c / n_spawned)^2 for c in values(spawn_sector_counts)) : 0.0
     open_action_telemetry["spawned_opportunity_count"] = Float64(n_spawned)
+    open_action_telemetry["spawned_opportunity_survivor_count"] = Float64(n_spawned)
     open_action_telemetry["spawn_sector_hhi"] = spawn_sector_hhi
     # Dispersion of spawn supply across sectors: number of distinct sectors
     # receiving at least one spawned opportunity (0 when nothing spawned).
     open_action_telemetry["spawn_sector_dispersion"] = Float64(length(spawn_sector_counts))
-    # Supply-elasticity regression input: mean perceived crowding × spawn
-    # count. strategy.jl's perceived_crowding reads
+    # Supply-elasticity input: mean perceived crowding x spawn count.
+    # strategy.jl's perceived_crowding reads
     # perception.practical_indeterminism.crowding_pressure, which is exactly
     # the per-round history key "market_crowding_pressure" — so its run mean
     # IS the perceived-crowding regressor, scaled by realized spawn supply.
@@ -1154,6 +1635,17 @@ function summarize_simulation(condition::RobustnessCondition, sim::EmergentSimul
     open_action_telemetry["mean_perceived_crowding"] = mean_perceived_crowding_run
     open_action_telemetry["supply_elasticity_input"] =
         mean_perceived_crowding_run * Float64(n_spawned)
+    # Complete opportunity stock-flow counts from the append-only event ledger.
+    # These totals include opportunities subsequently culled; the legacy
+    # spawned_opportunity_count above remains the end-of-run survivor stock for
+    # backward compatibility.
+    for (key, value) in GlimpseABM.opportunity_flow_counts(sim.market)
+        open_action_telemetry[key] = value
+    end
+    open_action_telemetry["exploration_niche_events_total"] = Float64(sum(
+        a.uncertainty_metrics.niches_discovered for a in sim.agents;
+        init=0,
+    ))
     # Number of distinct sectors invested in across the whole population — the
     # category count for normalizing per-tier sector HHI into [0,1] overlap.
     global_sectors = Set{String}()
@@ -1211,6 +1703,13 @@ function summarize_simulation(condition::RobustnessCondition, sim::EmergentSimul
         confidence_outcome = GlimpseABM.confidence_outcome_stats(agents)
         tier_total_niches = isempty(agents) ? 0 : sum(a.uncertainty_metrics.niches_discovered for a in agents)
         tier_combinations = isempty(agents) ? 0 : sum(a.uncertainty_metrics.new_combinations_created for a in agents)
+        tier_venture_events = [
+            event for agent in agents for event in agent.venture_ledger
+        ]
+        n_matured_investments = length(tier_venture_events)
+        rival_incidence = n_matured_investments == 0 ? missing :
+            count(event -> isfinite(event[14]) && event[14] > 0.0,
+                  tier_venture_events) / n_matured_investments
         perception_telemetry = Dict(
             key => history_mean(sim, "mean_$(key)_$(tier)")
             for key in TIER_PERCEPTION_KEYS
@@ -1242,6 +1741,32 @@ function summarize_simulation(condition::RobustnessCondition, sim::EmergentSimul
             :tier_sector_invest_hhi => tier_sector_total > 0 ? tier_sector_hhi : missing,
             :tier_sector_overlap => tier_sector_total > 0 ? tier_sector_overlap : missing,
             :roi => total_invested > 0 ? (total_returned - total_invested) / total_invested : missing,
+            :matured_investment_count => n_matured_investments,
+            :mean_capacity_saturation_at_entry =>
+                venture_metric_mean(tier_venture_events, 10),
+            :mean_capacity_saturation_at_maturity =>
+                venture_metric_mean(tier_venture_events, 11),
+            :mean_effective_capacity_saturation_at_maturity =>
+                venture_effective_saturation_mean(tier_venture_events),
+            :mean_capacity_saturation_change =>
+                venture_metric_mean(tier_venture_events, 13),
+            :mean_post_commitment_rival_capital =>
+                venture_metric_mean(tier_venture_events, 14),
+            :mean_post_commitment_rival_capacity_ratio =>
+                venture_ratio_mean(tier_venture_events, 14, 8),
+            :post_commitment_rival_incidence => rival_incidence,
+            :mean_crowding_return_multiplier =>
+                venture_metric_mean(tier_venture_events, 15),
+            :mean_realized_latent_capture =>
+                venture_metric_mean(tier_venture_events, 16),
+            :mean_performative_effective_capacity =>
+                venture_metric_mean(tier_venture_events, 17),
+            :mean_performative_lagged_commitment =>
+                venture_metric_mean(tier_venture_events, 18),
+            :mean_performative_commitment_share =>
+                venture_metric_mean(tier_venture_events, 19),
+            :mean_performative_uplift_fraction =>
+                venture_metric_mean(tier_venture_events, 20),
             :mean_competition => isempty(all_competition) ? missing : mean(all_competition),
             :max_competition => isempty(all_competition) ? missing : maximum(all_competition),
             :innovations_per_agent => n_tier == 0 ? missing : sum(a.innovation_count for a in agents) / n_tier,
@@ -1261,7 +1786,7 @@ function summarize_simulation(condition::RobustnessCondition, sim::EmergentSimul
         )
         # all/survivor emergent fields carry their own per-dimension missingness
         # (gated on observation counts); market telemetry and open-action
-        # (pivot / directed-creation) telemetry are population-level (repeated across tier rows,
+        # (P6/P7) telemetry are population-level (repeated across tier rows,
         # zeros where the open-action flags are off — genuine zero counts).
         # Perception telemetry and confidence-outcome stats are per-tier agent
         # statistics, so they are missing for an empty tier.
@@ -1324,6 +1849,79 @@ function all_conditions()
             "Set only the convex capital-saturation return-dilution term to zero; competition and recursion signals remain active.",
             "Distinguishes economic crowding losses from informational/behavioral convergence.",
             "fixed_mixed", "core", no_return_dilution!),
+
+        RobustnessCondition(
+            "PERFORMATIVE_COMMON_025", "performativity",
+            "Performative demand (ψ=0.25, common): effective niche capacity grows with lagged collective dollar commitment; the enlarged demand is shared by all founders in the niche.",
+            "Tests whether the frontier deficit is an artifact of objective/fixed value by making demand endogenously performed by prior collective action; survival of the deficit shows the mechanism runs on capture under convergence, not on value being pre-given.",
+            "fixed_mixed", "expanded", performative_common_025!),
+        RobustnessCondition(
+            "PERFORMATIVE_COMMON_050", "performativity",
+            "Performative demand (ψ=0.50, common): effective niche capacity grows with lagged collective dollar commitment; the enlarged demand is shared by all founders in the niche.",
+            "Dose-response for performed demand as a common good.",
+            "fixed_mixed", "expanded", performative_common_050!),
+        RobustnessCondition(
+            "PERFORMATIVE_COMMON_100", "performativity",
+            "Performative demand (ψ=1.00, common): effective niche capacity grows with lagged collective dollar commitment; the enlarged demand is shared by all founders in the niche.",
+            "Upper-dose performed-demand common-good test; if the deficit only closes here, escape requires implausibly elastic performed demand.",
+            "fixed_mixed", "expanded", performative_common_100!),
+        RobustnessCondition(
+            "PERFORMATIVE_APPROPRIABLE_025", "performativity",
+            "Performative demand (ψ=0.25, appropriable): the demand uplift accrues to each founder in proportion to their own commitment share (category ownership).",
+            "Tests whether performativity escapes the trap only when the performed demand is privately appropriable — the same appropriability condition the execution-moat results identify.",
+            "fixed_mixed", "expanded", performative_appropriable_025!),
+        RobustnessCondition(
+            "PERFORMATIVE_APPROPRIABLE_050", "performativity",
+            "Performative demand (ψ=0.50, appropriable): the demand uplift accrues to each founder in proportion to their own commitment share (category ownership).",
+            "Dose-response for appropriable performed demand.",
+            "fixed_mixed", "expanded", performative_appropriable_050!),
+        RobustnessCondition(
+            "PERFORMATIVE_APPROPRIABLE_100", "performativity",
+            "Performative demand (ψ=1.00, appropriable): the demand uplift accrues to each founder in proportion to their own commitment share (category ownership).",
+            "Upper-dose appropriable performed-demand test.",
+            "fixed_mixed", "expanded", performative_appropriable_100!),
+
+        RobustnessCondition(
+            "CROWDING_ACTION_HHI_BLEND", "mechanism_decomposition",
+            "Previous payoff equation: add 0.30 times the market-wide action-category HHI to each opportunity's outstanding-capital load.",
+            "Tests whether the pure I/K canonical result depends on excluding a market-wide action-concentration term from the local capacity constraint.",
+            "fixed_mixed", "expanded", crowding_action_hhi_blend!),
+
+        RobustnessCondition(
+            "NO_CREATED_BONUS", "mechanism_decomposition",
+            "Remove the created-opportunity scoring affinities (any-created x1.1, own-creation x1.2 -> both 1.0).",
+            "Tests whether creation-channel convergence depends on the hard-coded scoring attraction to founder-created niches.",
+            "fixed_mixed", "expanded", no_created_bonus!),
+
+        RobustnessCondition(
+            "OPPORTUNITY_COMPONENT_FIT_ON", "mechanism_decomposition",
+            "Attach knowledge-component requirements to opportunities so founder-specific component overlap creates within-sector fit, with no strategy-rule change.",
+            "Isolates whether finer founder-opportunity fit disperses selection or attenuates the frontier deficit without bundling comparative-advantage strategy.",
+            "fixed_mixed", "expanded", opportunity_component_fit_on!),
+
+        RobustnessCondition(
+            "ENDOGENOUS_OPPORTUNITIES_ONLY", "mechanism_decomposition",
+            "Disable background public-opportunity replenishment after initialization; exploration and successful innovation remain the only sources of new opportunities.",
+            "Tests whether the result and open-futures dynamics depend on an exogenous continuing flow of market opportunities.",
+            "fixed_mixed", "expanded", endogenous_opportunities_only!),
+
+        RobustnessCondition(
+            "NICHE_MULTIPLICITY_ONE", "mechanism_decomposition",
+            "Each successful exploration-created niche event opens exactly one opportunity instead of a uniform one-to-three draw.",
+            "Lower-bound test for whether arbitrary niche multiplicity manufactures the opportunity-creation channel.",
+            "fixed_mixed", "expanded", niche_multiplicity_one!),
+
+        RobustnessCondition(
+            "NICHE_MULTIPLICITY_FIXED_TWO", "mechanism_decomposition",
+            "Each successful exploration-created niche event opens exactly two opportunities, preserving the baseline draw's mean while removing its variance.",
+            "Tests whether stochastic multiplicity rather than endogenous creation drives the result.",
+            "fixed_mixed", "expanded", niche_multiplicity_fixed_two!),
+
+        RobustnessCondition(
+            "NICHE_MULTIPLICITY_THREE", "mechanism_decomposition",
+            "Each successful exploration-created niche event opens exactly three opportunities.",
+            "Upper-bound dose test for the opportunity-creation multiplicity assumption.",
+            "fixed_mixed", "expanded", niche_multiplicity_three!),
 
         RobustnessCondition(
             "NO_AI_HERDING_RECURSION", "mechanism_decomposition",
@@ -1394,7 +1992,7 @@ function all_conditions()
         RobustnessCondition(
             "FRONTIER_PUBLIC_OMNISCIENCE", "alternative_frontier_ai_specification",
             "Frontier AI receives maximal public coverage, near-perfect domain reasoning, and large quality boosts.",
-            "Strong near-omniscience counterfactual for public information.",
+            "Near-omniscience counterfactual for public-information access.",
             "fixed_mixed", "minimal", frontier_public_omniscience!),
 
         RobustnessCondition(
@@ -1403,8 +2001,8 @@ function all_conditions()
             "Tests whether execution dominance can overcome second-order future-knowledge costs.",
             "fixed_mixed", "minimal", premium_exec_5x!),
 
-        # --- Option-B robustness additions (2026-06-14): defensibility dose-response (P19),
-        # tail-heaviness robustness (P20), cost-calibration invariance (P21). ---
+        # --- Option-B comparison cells: defensibility dose-response, tail
+        # heaviness, and cost-calibration invariance. ---
         RobustnessCondition(
             "FRONTIER_EXEC_1_5X", "alternative_frontier_ai_specification",
             "Frontier AI receives 1.5x investment execution success multiplier.",
@@ -1422,12 +2020,12 @@ function all_conditions()
             "fixed_mixed", "expanded", frontier_exec_3x!),
         RobustnessCondition(
             "TRUNCATED_TAIL", "opportunity_distribution",
-            "Conservative robustness: remove the canonical niche-size tail and retain legacy truncated opportunity-return caps.",
+            "Conservative robustness: remove the canonical niche-size tail and retain truncated opportunity-return caps.",
             "P20: the no-size-tail distribution is the conservative case; the trap should persist.",
             "fixed_mixed", "expanded", truncated_tail!),
         RobustnessCondition(
             "MODERATE_TAIL", "opportunity_distribution",
-            "Intermediate canonical tail: niche-size log-sigma halfway between truncated and baseline; legacy return-tail settings retained for option-B comparisons.",
+            "Intermediate canonical tail: niche-size log-sigma halfway between truncated and baseline; return-tail settings retained for option-B comparisons.",
             "P20: tail dose-response; the trap is robust across market-size tail weight.",
             "fixed_mixed", "expanded", moderate_tail!),
         RobustnessCondition(
@@ -1459,15 +2057,15 @@ function all_conditions()
             "fixed_mixed", "minimal", all_favorable_to_premium!),
 
         RobustnessCondition(
-            "STRATEGIC_ANTICIPATION_ON", "legacy_operationalization",
+            "STRATEGIC_ANTICIPATION_ON", "strategy_operationalization",
             "Enable AI-assisted anticipation of crowded shared signals.",
-            "independent-implementation robustness check for the canonical S1/ladder operationalization (see the strategy-ladder design notes)",
+            "Independent-implementation robustness check for the canonical S1 strategy-ladder operationalization.",
             "fixed_mixed", "core", strategic_anticipation_on!),
 
         RobustnessCondition(
-            "STRATEGIC_DIVERSIFICATION_ON", "legacy_operationalization",
+            "STRATEGIC_DIVERSIFICATION_ON", "strategy_operationalization",
             "Enable anticipation plus equilibrium-aware diversification across near-top opportunities.",
-            "independent-implementation robustness check for the canonical S1/ladder operationalization (see the strategy-ladder design notes)",
+            "Independent-implementation robustness check for the canonical S1 strategy-ladder operationalization.",
             "fixed_mixed", "core", differentiated_strategy_on!),
 
         RobustnessCondition(
@@ -1476,14 +2074,12 @@ function all_conditions()
             "Operationalizes AGI as a complement to entrepreneurial judgment rather than a substitute.",
             "fixed_mixed", "core", ai_complementarity_on!),
 
-        # Token-core migration (2026-06-11): pure usage-based pricing is now
-        # the BASELINE (AI_COST_MODEL="token" struct default), so the former
-        # TOKEN_PRICING_ONLY cell is the baseline and the subscription-era
-        # architecture becomes the alternative-specification cell instead.
+        # Pure usage-based pricing is the baseline (AI_COST_MODEL="token" struct
+        # default), while subscription-era pricing is tested as an alternative.
         RobustnessCondition(
             "SUBSCRIPTION_ERA", "alternative_frontier_ai_specification",
             "Subscription-era pricing: monthly seat fees (\$400 advanced / \$3,500 frontier) plus metered usage, replacing the pure usage-based default.",
-            "Tests whether the frontier result depends on the marginal-compute pricing default: the contractual-burden architecture of today's consumer AI market, retained as the bridge to the pre-migration results.",
+            "Tests whether the frontier result depends on the marginal-compute pricing default rather than a subscription-plus-usage pricing architecture.",
             "fixed_mixed", "core", subscription_era!),
 
         RobustnessCondition(
@@ -1497,6 +2093,24 @@ function all_conditions()
             "Opportunity capacity is high and crowding is weaker.",
             "Boundary condition: paradox should weaken when market slack absorbs convergent investment.",
             "fixed_mixed", "core", market_slack_high_capacity!),
+
+        RobustnessCondition(
+            "CAPACITY_MEAN_HALF", "boundary_conditions_generalizability",
+            "Halve mean opportunity capacity while holding the oversubscription threshold, penalty strength, convexity, and capacity-tail dispersion fixed.",
+            "One-factor identification: tests whether the dollar capacity scale alone creates the tier contrast.",
+            "fixed_mixed", "expanded", capacity_mean_half!),
+
+        RobustnessCondition(
+            "CAPACITY_MEAN_DOUBLE", "boundary_conditions_generalizability",
+            "Double mean opportunity capacity while holding the oversubscription threshold, penalty strength, convexity, and capacity-tail dispersion fixed.",
+            "One-factor identification: tests whether the dollar capacity scale alone creates the tier contrast.",
+            "fixed_mixed", "expanded", capacity_mean_double!),
+
+        RobustnessCondition(
+            "CAPACITY_AWARE_SELECTION", "boundary_conditions_generalizability",
+            "Agents fully discount the currently observable opportunity-specific I/K penalty when ranking opportunities; contemporaneous rival commitments remain unobserved.",
+            "Tests whether capacity losses require strategically naive founders rather than simultaneous convergence on opportunities that looked unsaturated at commitment.",
+            "fixed_mixed", "expanded", capacity_aware_selection!),
 
         RobustnessCondition(
             "MARKET_DENSE_LOW_CAPACITY", "boundary_conditions_generalizability",
@@ -1534,17 +2148,17 @@ function all_conditions()
             "Generalizability check against fixed equal-tier assignment.",
             "emergent", "minimal", noop!),
 
-        # ── AGI strategy ladder (the strategy-ladder design notes) ──
+        # ── Strategy ladder ────────────────────────────────────────────────
         RobustnessCondition(
             "FRONTIER_STRATEGY_CONSENSUS", "agi_strategy_ladder",
             "Frontier-tier agents anticipate consensus congestion (S1): expected returns of consensus-legible opportunities shaded before commitment.",
-            "Trap attenuation, congestion channel: does the frontier deficit shrink when its users discount what every rival's instrument also ranks highly? S1 is expected to carry the largest single share.",
+            "Congestion channel: tests whether the frontier deficit shrinks when frontier users discount opportunities that many rivals' instruments also rank highly.",
             "fixed_mixed", "expanded", frontier_strategy_consensus!),
 
         RobustnessCondition(
             "FRONTIER_STRATEGY_COMPARATIVE", "agi_strategy_ladder",
             "Frontier-tier agents re-rank by private edge (S2): sector familiarity, knowledge overlap, and execution traits weight the AI's landscape map.",
-            "Trap attenuation, heterogeneity channel: founder-market fit must do causal work — AI for mapping, judgment for fit.",
+            "Heterogeneity channel: tests whether founder-market fit adds dispersive information beyond the AI landscape map.",
             "fixed_mixed", "expanded", frontier_strategy_comparative!),
 
         RobustnessCondition(
@@ -1556,153 +2170,146 @@ function all_conditions()
         RobustnessCondition(
             "FRONTIER_STRATEGY_COMPOSITE", "agi_strategy_ladder",
             "Frontier-tier agents run S1+S2+S3 jointly (agi_native).",
-            "The strongest ecologically defensible operationalization of the 'an AGI-level system would update' conjecture; the prediction is that relative advantage still does not return beyond the FREE_AI bound.",
+            "Frontier adaptivity composite: tests whether S1+S2+S3 together recover relative advantage beyond the FREE_AI bound.",
             "fixed_mixed", "expanded", frontier_strategy_composite!),
 
         RobustnessCondition(
             "ALL_STRATEGY_CONSENSUS", "agi_strategy_ladder",
             "Every agent anticipates consensus congestion (S1), regardless of tier.",
-            "Reflexivity relocation test: when contrarianism is the consensus, does crowding relocate into formerly-neglected opportunities or retire?",
+            "Reflexivity relocation test: when contrarianism is widespread, does crowding relocate into formerly neglected opportunities or decline?",
             "fixed_mixed", "expanded", all_strategy_consensus!),
 
         RobustnessCondition(
             "ALL_STRATEGY_COMPARATIVE", "agi_strategy_ladder",
             "Every agent re-ranks by private edge (S2), regardless of tier.",
-            "Reflexivity relocation test: symmetric founder-market-fit sorting should disperse entry along heterogeneous edges; the prediction is that the survival value of the strategy still rises with tier.",
+            "Reflexivity relocation test: symmetric founder-market-fit sorting should disperse entry along heterogeneous edges; P5 predicts the survival value of the strategy still rises with tier.",
             "fixed_mixed", "expanded", all_strategy_comparative!),
 
         RobustnessCondition(
             "ALL_STRATEGY_COMPARATIVE_COMPONENTS", "agi_strategy_ladder",
             "Every agent re-ranks by private edge (S2) using PER-OPPORTUNITY knowledge-component overlap (ENABLE_OPPORTUNITY_COMPONENTS), not the coarse sector-familiarity fallback.",
-            "Does genuine within-sector founder-market fit (recombinant-knowledge overlap, gate ~0.55) do causal work that sector-familiarity S2 cannot? Pairs with ALL_STRATEGY_COMPARATIVE as the sector-vs-component contrast in the robustness design.",
+            "Tests whether within-sector founder-market fit (recombinant-knowledge overlap, gate ~0.55) adds dispersion beyond sector-familiarity S2.",
             "fixed_mixed", "expanded", all_strategy_comparative_components!),
 
         RobustnessCondition(
             "ALL_STRATEGY_COMPLEMENT", "agi_strategy_ladder",
             "Every agent seeks complements (S3), regardless of tier.",
-            "Reflexivity relocation test: if everyone targets oracle-blind opportunities, second-order crowding should emerge in low-legibility niches (the relocation signature).",
+            "Reflexivity relocation test: if everyone targets oracle-blind opportunities, second-order crowding should emerge in low-legibility niches (P4's signature).",
             "fixed_mixed", "expanded", all_strategy_complement!),
 
         RobustnessCondition(
             "ALL_STRATEGY_COMPOSITE", "agi_strategy_ladder",
             "Every agent runs S1+S2+S3 jointly (agi_native), regardless of tier.",
-            "The AGI-robustness test: does the paradox of future knowledge survive population-wide AGI-native strategy one level up, or does reflexivity retire under symmetric sophistication?",
+            "Population-wide strategy test: does the paradox of future knowledge survive symmetric AGI-native strategy, or does reflexivity attenuate under symmetric sophistication?",
             "fixed_mixed", "expanded", all_strategy_composite!),
 
-        # ── Open-action extension (the strategy-ladder design notes) ──
+        # ── Open-action extension ─────────────────────────────────────────
         RobustnessCondition(
             "OPEN_ACTION_PIVOT", "open_action_space",
             "Abandonment option (A1): agents review in-flight investments each round and may liquidate at an age-dependent haircut (0.40 → 0.75 of committed capital), redeploying the recovery. Deterioration gain 2.0 per liveness probe (scripts/probe_pivot_liveness.jl).",
-            "Prediction: pivot attenuates the trap (escape from crowded commitments) but does not eliminate it; pivot re-correlation onto consensus second-bests is possible and reported either way. Falsifier: trap unchanged or eliminated.",
+            "Pivot-channel test: measures whether escape from crowded commitments attenuates the trap and whether pivots re-correlate onto consensus second-best opportunities.",
             "fixed_mixed", "expanded", open_action_pivot!),
 
         RobustnessCondition(
             "OPEN_ACTION_DIRECTED_CREATION", "open_action_space",
             "Hayekian redirection (A2): innovating agents bias new-combination sector selection away from sectors they perceive as crowded toward sparse ones; creation volume is unchanged.",
-            "Prediction: directed creation raises measured supply elasticity above the ≈0 anti-Hayekian baseline and shrinks the trap; second-order crowding of formerly-sparse sectors may emerge (reflexivity relocating). Falsifier: elasticity unchanged, or trap eliminated by redirection alone.",
+            "Directed-creation test: measures whether steering new combinations toward sparse sectors raises supply elasticity and attenuates convergence pressure.",
             "fixed_mixed", "expanded", open_action_directed_creation!),
 
         RobustnessCondition(
             "OPEN_ACTION_BOTH", "open_action_space",
             "Both open-action channels (A1 pivot + A2 directed creation) active for all agents. Pivot deterioration gain 2.0 per liveness probe.",
-            "Pivot and directed-creation jointly: the full open-action space without strategic sophistication — does opening exit AND entry topology together leave the trap standing where each channel alone does?",
+            "P6 + P7 jointly: the full open-action space without strategic sophistication — does opening exit AND entry topology together leave the trap standing where each channel alone does?",
             "fixed_mixed", "expanded", open_action_both!),
 
         RobustnessCondition(
             "OPEN_ACTION_AGI_NATIVE_MARKET", "open_action_space",
             "Maximal AGI-robustness cell: open action space (pivot + directed creation, pivot gain 2.0 per liveness probe) with every agent running the composite AGI-native strategy.",
-            "Strongest-claim cell: if the trap survives open actions plus population-wide AGI-native strategy, the paradox of future knowledge is robust to both open action spaces and strategic sophistication — the strongest claim made. If it does not survive, the boundary IS the finding: the trap lives in closed-action, bounded-strategy markets, i.e., the present.",
+            "Joint open-action and strategy test: measures whether the paradox survives both open action spaces and population-wide strategic sophistication.",
             "fixed_mixed", "expanded", open_action_agi_native_market!),
 
-        # ── Dose-response sweeps (strategy-proof vs strategy-resistant) ──
-        # Motivated by an earlier ladder run: trap −18.5pp at default
-        # strengths with 0–1.4pp attenuation; pivot arm nearly dead at
-        # N=1000. Each cell pushes one dial to its maximum EFFECTIVE value
-        # (bounded by the use-site clamps — see the dose-response block
-        # comment above the apply! functions).
+        # ── Dose-response sweeps ──────────────────────────────────────────
+        # Each cell pushes one dial to its maximum effective value, bounded by
+        # the use-site clamps described near the apply! functions.
         RobustnessCondition(
             "DOSE_S1_FRONTIER_2X", "dose_response",
-            "Dose probe: S1 raw consensus discount 2.0, frontier-only. The use-site clamp [0,1] (strategy_shaded_return) neutralizes this to an effective 1.0 — i.e. the documented default. Under paired seeds this cell should be bit-identical to FRONTIER_STRATEGY_CONSENSUS; any divergence falsifies the saturation reading.",
-            "Dose-response: distinguishes strategy-proof from strategy-resistant for the trap. The S1 verdict is structural — the default IS the maximum dose (clamp ceiling), so the observed 0–1.4pp attenuation already bounds the S1 curve at its top; this cell verifies the clamp in vivo.",
+            "Dose probe: S1 raw consensus discount 2.0, frontier-only. The use-site clamp [0,1] (strategy_shaded_return) neutralizes this to an effective 1.0 — i.e. the documented default. Under paired seeds this cell should be bit-identical to FRONTIER_STRATEGY_CONSENSUS; any divergence would flag a saturation mismatch.",
+            "Dose-response: verifies that the S1 default is already the maximum effective dose under the use-site clamp.",
             "fixed_mixed", "expanded", dose_s1_frontier_2x!),
 
         RobustnessCondition(
             "DOSE_S1_FRONTIER_MAXX", "dose_response",
             "Dose ceiling: S1 consensus discount 1.0, frontier-only — the maximum value NOT clamp-neutralized (use-site clamp [0,1]), which equals the conservative default already run. Together with the 2X probe this pins the S1 dose-response curve as saturated from the start.",
-            "Dose-response: bounds the S1 attenuation curve — there is no gentler-dial explanation for the S1 null, because no stronger S1 dose is expressible; the trap is strategy-proof with respect to anticipatory congestion discounting.",
+            "Dose-response: bounds the S1 attenuation curve at the maximum expressible anticipatory-congestion discount.",
             "fixed_mixed", "expanded", dose_s1_frontier_maxx!),
 
         RobustnessCondition(
             "DOSE_S2_FRONTIER_2X", "dose_response",
             "Dose: S2 edge weight 2.0, frontier-only — the use-site clamp ceiling [0,2] (strategy_score_multiplier), i.e. the maximum effective S2 dose, doubling the founder-market-fit re-ranking gradient vs the default 1.0. (The overall [0.25,2.0] multiplier clamp additionally binds when |edge − mean edge| > 0.5.)",
-            "Dose-response: bounds the S2 attenuation curve at its ceiling — if doubling the private-edge re-ranking leaves the trap standing, the heterogeneity channel is strategy-proof, not under-dosed.",
+            "Dose-response: bounds the S2 attenuation curve at its private-edge re-ranking ceiling.",
             "fixed_mixed", "expanded", dose_s2_frontier_2x!),
 
         RobustnessCondition(
             "DOSE_COMPOSITE_FRONTIER_MAX", "dose_response",
             "Maximal-dose composite (agi_native), frontier-only: consensus discount 1.0 (S1 already saturated at its [0,1] clamp ceiling), edge weight 2.0 ([0,2] ceiling), complement shift 2.0 (S3a [0,2] ceiling; the S3b softening path clamps strength to [0,1] and stays at its saturated default). The strongest frontier-only strategy treatment the implementation can express.",
-            "Dose-response: if the −18.5pp frontier trap stands here, it is strategy-PROOF within every dose the ladder can express — not strategy-resistant at gentle defaults; if it folds, the attenuation curve's upper bound is located.",
+            "Dose-response: tests the strongest frontier-only composite strategy treatment expressible by the implementation.",
             "fixed_mixed", "expanded", dose_composite_frontier_max!),
 
         RobustnessCondition(
             "DOSE_COMPOSITE_ALL_MAX", "dose_response",
             "Maximal-dose composite (agi_native) for every tier: population-wide S1+S2+S3 at max-effective strengths (discount 1.0 / edge weight 2.0 / complement shift 2.0 — the use-site clamp ceilings).",
-            "Dose-response analogue of the reflexivity relocation test at the dial ceilings: does symmetric maximal sophistication retire the trap, relocate it, or leave it standing where defaults did neither? Bounds the population-wide attenuation curve.",
+            "Dose-response analogue of P4 at the dial ceilings: does symmetric maximal sophistication retire the trap, relocate it, or leave it standing where defaults did neither? Bounds the population-wide attenuation curve.",
             "fixed_mixed", "expanded", dose_composite_all_max!),
 
         RobustnessCondition(
             "DOSE_PIVOT_GAIN_4X", "dose_response",
-            "Abandonment option at deterioration gain 4.0 — 2x the N=64 liveness-calibrated 2.0. Gain is validated >= 0 and unbounded above; the trigger d_eff = clamp(deterioration x conviction x gain, 0, 1). Pivot-channel scale recalibration: per-agent perceived-crowding deterioration swings compress from N=64 to N=1000, so the gain that made the arm live in the probe (~3-5% pivot rates) left it nearly dead at production scale.",
-            "Dose-response for the pivot channel: locates the gain that restores arm liveness at N=1000, bounding the pivot attenuation curve — a dead arm at default gain says nothing about whether exit options attenuate the trap.",
+            "Abandonment option at deterioration gain 4.0. Gain is validated >= 0 and unbounded above; the trigger d_eff = clamp(deterioration x conviction x gain, 0, 1).",
+            "Dose-response for the pivot channel: locates how higher pivot sensitivity changes exit behavior and trap attenuation at production scale.",
             "fixed_mixed", "expanded", dose_pivot_gain_4x!),
 
         RobustnessCondition(
             "DOSE_PIVOT_GAIN_8X", "dose_response",
-            "Abandonment option at deterioration gain 8.0 — 4x the N=64 liveness calibration; d_eff saturates (=1) whenever deterioration x conviction >= 0.125, an aggressive upper anchor for the liveness curve at N=1000 (where the N=64-calibrated gain 2.0 compressed to a nearly dead arm).",
-            "Dose-response upper anchor for the pivot channel: if the trap is unmoved even when the trigger region is maximally reachable, exit options are strategy-proof against it; pivot re-correlation onto consensus second-bests is reported either way.",
+            "Abandonment option at deterioration gain 8.0; d_eff saturates (=1) whenever deterioration x conviction >= 0.125, an aggressive upper anchor for the liveness curve.",
+            "Dose-response upper anchor for the pivot channel: tests whether making the trigger region highly reachable changes trap attenuation; pivot re-correlation onto consensus second-bests is reported either way.",
             "fixed_mixed", "expanded", dose_pivot_gain_8x!),
 
         RobustnessCondition(
             "DOSE_OPEN_COMPOSITE_MAX", "dose_response",
-            "Maximal-dose version of the strongest-claim cell: pivot at gain 8.0 + directed creation (default mixture strength — A2 was not the gentle dial; pinned for comparability with the open-action cells) + population-wide agi_native at max-effective strengths (discount 1.0 / edge 2.0 / shift 2.0).",
-            "Dose-response ceiling for the strongest-claim cell: if the trap survives the maximal expressible open-action + strategy dose, strategy-proof is the verdict at the strongest claim level; if it folds only here, the dose-response sweep has located the boundary of the paradox.",
+            "Maximal-dose open-action cell: pivot at gain 8.0 + directed creation at default mixture strength + population-wide agi_native at max-effective strengths (discount 1.0 / edge 2.0 / shift 2.0).",
+            "Dose-response ceiling for the joint open-action and strategy treatment.",
             "fixed_mixed", "expanded", dose_open_composite_max!),
 
-        # ── Emergence audit extension (the strategy-ladder design notes,
-        #    emergence-audit extension) ───────────────────────────────────
+        # ── Emergence mechanism extension ─────────────────────────────────
         RobustnessCondition(
             "AI_ERRORS_CORR_50", "emergence_audit",
             "Half-shared AI estimate errors (AI_ERROR_CORRELATION rho=0.5): the continuous return-estimate error is sqrt(0.5)*eps_common(opp, round, tier) + sqrt(0.5)*eps_idio, total variance preserved — estimate accuracy is unchanged by construction; only cross-agent error commonality within a tier rises.",
-            "Quality-vs-commonality decomposition: at fixed accuracy the frontier TE deepens monotonically in rho, toward the NO_AI_ERRORS bound (~-27pp) at unchanged accuracy — the trap tracks signal CORRELATION, not signal QUALITY. The midpoint locates curvature of the rho dose-response. Falsifier: TE flat in rho.",
+            "Quality-vs-commonality decomposition: at fixed accuracy, tests whether the frontier treatment effect changes with shared signal error.",
             "fixed_mixed", "expanded", ai_errors_corr_50!),
 
         RobustnessCondition(
             "SHARED_AI_ERRORS", "emergence_audit",
             "Fully shared AI estimate errors (AI_ERROR_CORRELATION rho=1.0): every same-tier agent's instrument draws THE SAME standard-normal error per (opportunity, round, tier) — the shared-foundation-model world with correlated blind spots — at exactly the per-agent error variance (accuracy) of the rho=0 default.",
-            "Quality-vs-commonality decomposition, endpoint: the prediction is that the TE deepens toward the NO_AI_ERRORS bound (~-27pp) at unchanged accuracy, establishing that the default fully-idiosyncratic error structure was the conservative, trap-MINIMIZING case. Falsifier: TE flat in rho — convergence would then not be signal-correlation-driven and the mechanism claim must be revised.",
+            "Quality-vs-commonality endpoint: tests whether fully shared signal error deepens convergence at unchanged per-agent accuracy.",
             "fixed_mixed", "expanded", shared_ai_errors!),
 
         RobustnessCondition(
             "DECISION_NOISE_HIGH", "emergence_audit",
             "Decision temperature doubled (DECISION_TEMPERATURE T=2.0): action-selection softmax utilities divided by 2x the calibrated temperature, flattening every agent's invest/innovate/explore/maintain mix toward uniform.",
-            "Mixed-equilibrium conjecture as an experiment: raising T attenuates the trap — decision noise approximates the mixed-strategy congestion equilibrium and partially rescues frontier agents from convergent entry — but cannot breach the contractual-cost floor (~-13pp at current pricing). Falsifier: no response — action-selection noise is not a binding channel.",
+            "Decision-mixing test: raising T flattens action probabilities and measures whether mixed action selection attenuates convergent entry.",
             "fixed_mixed", "expanded", decision_noise_high!),
 
         RobustnessCondition(
             "DECISION_NOISE_LOW", "emergence_audit",
             "Decision temperature halved (DECISION_TEMPERATURE T=0.5): action-selection softmax sharpened toward argmax — agents act nearly deterministically on their utilities.",
-            "Mixed-equilibrium conjecture, deterministic arm: lowering T (toward argmax, the deterministic-AI limit) deepens the trap — determinism strips out the mixing that decorrelates entry. Together with DECISION_NOISE_HIGH this brackets the conjecture in both directions. Falsifier: no response in either direction.",
+            "Deterministic-action bracket: lowering T sharpens action probabilities and pairs with DECISION_NOISE_HIGH to bound decision-mixing effects.",
             "fixed_mixed", "expanded", decision_noise_low!),
 
-        # ── Endogenous-adoption family (robustness addendum, 2026-06-11) ──────
-        # The adoption equilibrium promoted from a single descriptive cell to a
-        # full experimental family. Design is "emergent": all founders start at
-        # no-AI and choose tiers from observed ROI, posted prices, and peer
-        # signals (sticky review cadence; plan-vs-bill-audited usage planner).
+        # ── Endogenous-adoption family ────────────────────────────────────
+        # Design is "emergent": all founders start at no-AI and choose tiers
+        # from observed ROI, posted prices, and peer signals.
         # Causal IUT machinery still excludes these (self-selection); the
-        # family's claims are about the EQUILIBRIUM: what tier mix the market
-        # converges to, and which mechanism levers move that mix
-        # (the adoption-family design notes). Run with
+        # family's claims are about the equilibrium: what tier mix the market
+        # converges to, and which mechanism levers move that mix. Run with
         # SUITE_PRESET=adoption (includes BASELINE for paired comparisons).
         RobustnessCondition(
             "ADOPT_BASELINE", "endogenous_adoption",
@@ -1725,7 +2332,7 @@ function all_conditions()
         RobustnessCondition(
             "ADOPT_ERROR_FREE", "endogenous_adoption",
             "Endogenous tier choice with hallucination and overconfidence removed from all AI tiers.",
-            "Adoption-side mirror of NO_AI_ERRORS: error-free instruments deepen the fixed-tier trap (-27.4), so if founders learn from outcomes, better AI should find FEWER takers — the sharpest available test that adoption tracks experienced consequences rather than instrument quality.",
+            "Adoption-side mirror of NO_AI_ERRORS: tests whether error-free instruments change tier demand through experienced consequences rather than instrument quality alone.",
             "emergent", "adoption", no_hallucination_overconfidence!),
 
         RobustnessCondition(
@@ -1743,7 +2350,7 @@ function all_conditions()
         RobustnessCondition(
             "ADOPT_STRATEGIES_ALL", "endogenous_adoption",
             "Endogenous tier choice with the full strategic repertoire (consensus discounting, comparative advantage, complement-seeking) active for every founder.",
-            "Tests whether strategic sophistication changes what the market learns to buy: if strategies cannot rescue frontier survival (the strategy-ladder and strongest-claim cells), sophisticated founders should not adopt frontier AI at higher rates either.",
+            "Tests whether strategic sophistication changes what the market learns to buy: if strategies cannot rescue frontier survival (P1/P8), sophisticated founders should not adopt frontier AI at higher rates either.",
             "emergent", "adoption", all_strategy_composite!),
 
         RobustnessCondition(
@@ -1758,43 +2365,56 @@ function all_conditions()
             "Sorting-speed bound in the slow direction; together with ADOPT_FAST_LEARNING brackets the learning-cadence assumption.",
             "emergent", "adoption", adopt_slow_learning!),
 
-        # ── Fixed-tier robustness addendum (2026-06-11) ─────────────────────
+        # ── Fixed-tier supplemental addendum ───────────────────────────────
         RobustnessCondition(
-            "HUMAN_BASELINE_WEAK", "robustness_addendum",
+            "HUMAN_BASELINE_WEAK", "supplemental_addendum",
             "Unaided founders' published characteristics lowered to quality 0.15 / breadth 0.12 (default 0.25 / 0.20); AI tiers unchanged.",
             "Lower bracket of the unaided-search anchor: shows whether the frontier trap's magnitude depends on how weak the no-AI comparison group is assumed to be.",
             "fixed_mixed", "adoption", human_baseline_weak!),
 
         RobustnessCondition(
-            "HUMAN_BASELINE_STRONG", "robustness_addendum",
+            "HUMAN_BASELINE_STRONG", "supplemental_addendum",
             "Unaided founders' published characteristics raised to quality 0.35 / breadth 0.30; AI tiers unchanged.",
             "Upper bracket of the unaided-search anchor: a stronger unaided floor narrows the first-order information gap — if the trap shrinks proportionally, it is information-gap-driven; if not, the anchor was not doing hidden work.",
             "fixed_mixed", "adoption", human_baseline_strong!),
 
         RobustnessCondition(
-            "NO_AI_BIAS", "robustness_addendum",
+            "NO_AI_BIAS", "supplemental_addendum",
             "Systematic bias term removed from all AI estimates (AI_BIAS_INTENSITY=0); hallucination and overconfidence unchanged.",
-            "Completes the pathology-removal family: NO_AI_ERRORS removed hallucination+overconfidence jointly; this cell isolates the one pathology channel that previously had no dial. Prediction (veridical convergence): removing bias improves truth-tracking and therefore does NOT relieve the trap.",
+            "Isolates the systematic-bias channel while leaving hallucination and overconfidence unchanged.",
             "fixed_mixed", "adoption", no_ai_bias!),
 
         RobustnessCondition(
-            "WEALTH_SCALED_COMPUTE", "robustness_addendum",
+            "WEALTH_SCALED_COMPUTE", "supplemental_addendum",
             "Analysis breadth scales with founder resources (visibility budget x clamp(capital/initial equity, 0.25, 4.0)), uniformly across tiers; extra analyses billed per use.",
             "The rich-get-richer marginal-compute dynamic as a direct experiment rather than a design exclusion: if early winners buying more analysis could invert the frontier trap, this cell is where it would show.",
             "fixed_mixed", "adoption", wealth_scaled_compute!),
     ]
 end
 
+function filter_conditions(
+    conditions::AbstractVector{RobustnessCondition},
+    condition_filter::AbstractString,
+)::Vector{RobustnessCondition}
+    normalized_filter = strip(condition_filter)
+    isempty(normalized_filter) && return collect(conditions)
+    requested = Set(strip.(split(normalized_filter, ",")))
+    known = Set(condition.name for condition in conditions)
+    missing = setdiff(requested, known)
+    if !isempty(missing)
+        error("Unknown CONDITIONS entries: $(join(sort!(collect(missing)), ", "))")
+    end
+    # Every non-baseline cell is analyzed as a seed-paired contrast against the
+    # baseline produced by this same job. Make treatment-only filters complete
+    # by construction instead of silently writing an empty delta artifact.
+    any(name -> name != "BASELINE", requested) && push!(requested, "BASELINE")
+    return [condition for condition in conditions if condition.name in requested]
+end
+
 function selected_conditions()
     conditions = all_conditions()
     if !isempty(CONDITION_FILTER)
-        requested = Set(strip.(split(CONDITION_FILTER, ",")))
-        conditions = [c for c in conditions if c.name in requested]
-        missing = setdiff(requested, Set(c.name for c in conditions))
-        if !isempty(missing)
-            error("Unknown CONDITIONS entries: $(join(collect(missing), ", "))")
-        end
-        return conditions
+        return filter_conditions(conditions, CONDITION_FILTER)
     end
 
     if SUITE_PRESET == "minimal"
@@ -1802,13 +2422,12 @@ function selected_conditions()
     elseif SUITE_PRESET == "core"
         return [c for c in conditions if c.preset in ("minimal", "core")]
     elseif SUITE_PRESET == "expanded"
-        # The manuscript's 56-condition suite. Deliberately EXCLUDES the
-        # adoption-addendum preset so the expanded manifest stays stable across
-        # runs; the addendum runs as its own batch.
+        # The manuscript's expanded suite excludes the adoption-addendum preset;
+        # the addendum runs as its own job.
         return [c for c in conditions if c.preset != "adoption"]
     elseif SUITE_PRESET == "adoption"
-        # Endogenous-adoption family + fixed-tier robustness addendum. BASELINE
-        # is included so paired within-suite treatment effects and the
+        # Endogenous-adoption family plus fixed-tier supplemental addendum.
+        # BASELINE is included so paired within-suite treatment effects and the
         # permutation placebo have their anchor without depending on a
         # different run's outputs.
         return [c for c in conditions if c.preset == "adoption" || c.name == "BASELINE"]
@@ -1851,8 +2470,8 @@ end
 
 function scorecard_emergent_observations(stats::AbstractDict, dim::String)::Float64
     all_agent_key = "all_agent_emergent_$(dim)_observations"
-    legacy_key = "emergent_$(dim)_observations"
-    return Float64(get(stats, all_agent_key, get(stats, legacy_key, 0.0)))
+    fallback_key = "emergent_$(dim)_observations"
+    return Float64(get(stats, all_agent_key, get(stats, fallback_key, 0.0)))
 end
 
 function metric_delta_band(
@@ -2140,10 +2759,63 @@ function summarize_rows(per_run_df::DataFrame)
             survival_sd = skipmissing_std(group.survival_rate),
             te_vs_none_pp = te_vs_none_pp,
             mean_final_capital = skipmissing_mean(group.mean_final_capital),
+            mean_in_flight_capital = skipmissing_mean(group.mean_in_flight_capital),
+            mean_net_worth = skipmissing_mean(group.mean_net_worth),
             roi_mean = skipmissing_mean(group.roi),
+            matured_investment_count_mean =
+                skipmissing_mean(group.matured_investment_count),
+            mean_capacity_saturation_at_entry =
+                skipmissing_mean(group.mean_capacity_saturation_at_entry),
+            mean_capacity_saturation_at_maturity =
+                skipmissing_mean(group.mean_capacity_saturation_at_maturity),
+            mean_effective_capacity_saturation_at_maturity =
+                skipmissing_mean(
+                    group.mean_effective_capacity_saturation_at_maturity),
+            mean_capacity_saturation_change =
+                skipmissing_mean(group.mean_capacity_saturation_change),
+            mean_post_commitment_rival_capital =
+                skipmissing_mean(group.mean_post_commitment_rival_capital),
+            mean_post_commitment_rival_capacity_ratio =
+                skipmissing_mean(group.mean_post_commitment_rival_capacity_ratio),
+            post_commitment_rival_incidence =
+                skipmissing_mean(group.post_commitment_rival_incidence),
+            mean_crowding_return_multiplier =
+                skipmissing_mean(group.mean_crowding_return_multiplier),
+            mean_realized_latent_capture =
+                skipmissing_mean(group.mean_realized_latent_capture),
+            mean_performative_effective_capacity =
+                skipmissing_mean(group.mean_performative_effective_capacity),
+            mean_performative_lagged_commitment =
+                skipmissing_mean(group.mean_performative_lagged_commitment),
+            mean_performative_commitment_share =
+                skipmissing_mean(group.mean_performative_commitment_share),
+            mean_performative_uplift_fraction =
+                skipmissing_mean(group.mean_performative_uplift_fraction),
+            exploration_niche_events_total_mean =
+                skipmissing_mean(group.exploration_niche_events_total),
+            exploration_opportunities_created_total_mean =
+                skipmissing_mean(group.exploration_opportunities_created_total),
+            innovation_opportunities_spawned_total_mean =
+                skipmissing_mean(group.innovation_opportunities_spawned_total),
+            background_opportunities_created_total_mean =
+                skipmissing_mean(group.background_opportunities_created_total),
+            opportunities_publicized_total_mean =
+                skipmissing_mean(group.opportunities_publicized_total),
+            opportunities_culled_total_mean =
+                skipmissing_mean(group.opportunities_culled_total),
+            opportunities_created_total_mean =
+                skipmissing_mean(group.opportunities_created_total),
+            opportunity_ending_stock_mean =
+                skipmissing_mean(group.opportunity_ending_stock),
+            opportunity_stock_flow_residual_mean =
+                skipmissing_mean(group.opportunity_stock_flow_residual),
+            opportunity_commitments_total_mean =
+                skipmissing_mean(group.opportunity_commitments_total),
             mean_competition = skipmissing_mean(group.mean_competition),
             max_competition = skipmissing_mean(group.max_competition),
             innovations_per_agent = skipmissing_mean(group.innovations_per_agent),
+            niches_per_agent = skipmissing_mean(group.niches_per_agent),
+            combinations_per_agent = skipmissing_mean(group.combinations_per_agent),
             invest_share = skipmissing_mean(group.invest_share),
             innovate_share = skipmissing_mean(group.innovate_share),
             explore_share = skipmissing_mean(group.explore_share),
@@ -2240,6 +2912,100 @@ function paired_treatment_effects(per_run_df::DataFrame)
             se_te_pp = se_pp,
             ci95_low_pp = mean_pp - 1.96 * se_pp,
             ci95_high_pp = mean_pp + 1.96 * se_pp,
+        ))
+    end
+    return DataFrame(rows)
+end
+
+"""
+Return a long-form, within-run Frontier/AI-tier minus No-AI effect panel for
+the economic, innovation, and survival outcome families used in Figure 4.
+
+An outcome contrast is omitted when either tier's cell is missing or nonfinite;
+it is never replaced with zero.  This outcome-specific filtering matters for
+endogenous-adoption cells where a tier can be empty in an otherwise valid run.
+"""
+function per_run_outcome_effect_panel(
+    per_run_df::DataFrame;
+    specs=PAIRED_OUTCOME_SPECS,
+)
+    rows = NamedTuple[]
+    grouping = [:condition, :category, :description, :theoretical_role, :design]
+    for condition_df in groupby(per_run_df, grouping)
+        for run_idx in unique(condition_df.run_idx)
+            run_df = condition_df[condition_df.run_idx .== run_idx, :]
+            none_rows = run_df[run_df.tier .== "none", :]
+            nrow(none_rows) == 1 || continue
+            for tier in ("basic", "advanced", "premium")
+                tier_rows = run_df[run_df.tier .== tier, :]
+                nrow(tier_rows) == 1 || continue
+                for spec in specs
+                    none_value = none_rows[1, spec.source_column]
+                    tier_value = tier_rows[1, spec.source_column]
+                    (ismissing(none_value) || ismissing(tier_value)) && continue
+                    none_float = Float64(none_value)
+                    tier_float = Float64(tier_value)
+                    (isfinite(none_float) && isfinite(tier_float)) || continue
+                    push!(rows, (
+                        condition = first(condition_df.condition),
+                        category = first(condition_df.category),
+                        description = first(condition_df.description),
+                        theoretical_role = first(condition_df.theoretical_role),
+                        design = first(condition_df.design),
+                        run_idx = run_idx,
+                        tier = tier,
+                        tier_label = tier_display_label(tier),
+                        outcome = spec.outcome,
+                        outcome_label = spec.outcome_label,
+                        outcome_family = spec.outcome_family,
+                        source_column = String(spec.source_column),
+                        unit = spec.unit,
+                        effect = (tier_float - none_float) * spec.scale,
+                    ))
+                end
+            end
+        end
+    end
+    return DataFrame(rows)
+end
+
+"""Summarize the multivariate paired panel with 95% normal intervals."""
+function paired_outcome_effects(
+    per_run_df::DataFrame;
+    specs=PAIRED_OUTCOME_SPECS,
+)
+    panel = per_run_outcome_effect_panel(per_run_df; specs=specs)
+    rows = NamedTuple[]
+    grouping = [
+        :condition, :category, :description, :theoretical_role, :design,
+        :tier, :tier_label, :outcome, :outcome_label, :outcome_family,
+        :source_column, :unit,
+    ]
+    for group in groupby(panel, grouping)
+        effects = Float64.(group.effect)
+        n = length(effects)
+        mean_effect = mean(effects)
+        sd_effect = n < 2 ? 0.0 : std(effects)
+        se_effect = safe_se(sd_effect, n)
+        push!(rows, (
+            condition = first(group.condition),
+            category = first(group.category),
+            description = first(group.description),
+            theoretical_role = first(group.theoretical_role),
+            design = first(group.design),
+            tier = first(group.tier),
+            tier_label = first(group.tier_label),
+            outcome = first(group.outcome),
+            outcome_label = first(group.outcome_label),
+            outcome_family = first(group.outcome_family),
+            source_column = first(group.source_column),
+            unit = first(group.unit),
+            n_runs = n,
+            mean_effect = mean_effect,
+            sd_effect = sd_effect,
+            se_effect = se_effect,
+            ci95_low = mean_effect - 1.96 * se_effect,
+            ci95_high = mean_effect + 1.96 * se_effect,
         ))
     end
     return DataFrame(rows)
@@ -2464,13 +3230,8 @@ function main()
     conditions = selected_conditions()
     if "--help" in ARGS || "--list" in ARGS || get(ENV, "DRY_RUN", "0") == "1"
         print_manifest(conditions)
-        # Config preflight: BUILD every selected condition's config so that
-        # script <-> src version skew (a condition referencing a config field
-        # the deployed src does not define) fails HERE, in the dry run, with
-        # one clear message — not 64 threads deep into a compute allocation.
-        # Added after a run failed exactly this way: the
-        # emergence-audit conditions were synced to a compute node without the src/
-        # fields they set. Costs <1s for the full condition set.
+        # Config preflight builds every selected condition before launch so
+        # script/source mismatches fail early with one clear message.
         for condition in conditions
             try
                 build_config(condition, BASE_SEED)
@@ -2478,7 +3239,7 @@ function main()
                 error("DRY_RUN config preflight FAILED for condition " *
                       "$(condition.name): $(sprint(showerror, e)). " *
                       "Deployed src/ is likely out of sync with this script — " *
-                      "sync src/ scripts/ test/ together, then re-run setup.")
+                      "rsync src/ scripts/ test/ together, then re-run setup_arc.sh.")
             end
         end
         println("\nConfig preflight: all $(length(conditions)) condition configs build cleanly.")
@@ -2492,12 +3253,13 @@ function main()
         script_name=basename(@__FILE__),
         parameters=Dict(
             "BASE_SEED" => BASE_SEED,
-            "UT_CLAMP_MAX" => UT_CLAMP_MAX,
-            "UT_OPS" => UT_OPS,
-            "UT_RANGE_MULT" => UT_RANGE_MULT,
-            "UT_SIGMA_CAP" => UT_SIGMA_CAP,
-            "UT_SIGMA_MULT" => UT_SIGMA_MULT,
+            "B_CLAMP_MAX" => B_CLAMP_MAX,
+            "B_OPS" => B_OPS,
+            "B_RANGE_MULT" => B_RANGE_MULT,
+            "B_SIGMA_CAP" => B_SIGMA_CAP,
+            "B_SIGMA_MULT" => B_SIGMA_MULT,
             "CONDITIONS" => CONDITION_FILTER == "" ? "selected_by_preset" : CONDITION_FILTER,
+            "DERIVED_GATE" => DERIVED_GATE,
             "HEAVY_TAIL_RETURNS" => HEAVY_TAIL_RETURNS,
             "N_AGENTS" => N_AGENTS,
             "NICHE_CANONICAL" => NICHE_CANONICAL,
@@ -2506,14 +3268,17 @@ function main()
             "NICHE_SIGMA" => NICHE_SIGMA,
             "N_ROUNDS" => N_ROUNDS,
             "N_RUNS" => N_RUNS,
-            "UNICORN_TAIL" => UNICORN_TAIL,
+            "OPTION_B_TAIL" => OPTION_B_TAIL,
             "OUTPUT_DIR" => OUTPUT_DIR,
+            "RUN_TAG" => get(ENV, "RUN_TAG", ""),
+            "SUBMISSION_GIT_COMMIT" =>
+                get(ENV, "SUBMISSION_GIT_COMMIT", ""),
             "SUITE_PRESET" => SUITE_PRESET,
             "SUITE_SEED_MODE" => SUITE_SEED_MODE,
             "VENTURE_PANEL" => VENTURE_PANEL,
         ),
         notes=Dict(
-            "suite" => "theory-facing robustness/refutation suite",
+            "suite" => "manuscript robustness suite",
         ),
     )
     per_cond_dir = joinpath(OUTPUT_DIR, "per_condition")
@@ -2527,12 +3292,9 @@ function main()
 
     # ── Flattened (condition × run) task scheduling ─────────────────────────
     # Every (condition, run_idx) pair is one independent task in a single
-    # threaded loop. The old structure (sequential conditions, threads over
-    # runs within each) put a barrier after every condition: at N_RUNS=50 any
-    # thread count >50 idled, and the slowest-run tail latency stacked once per
-    # condition. Tasks are built condition-major (all runs of condition 1, then
-    # condition 2, ...) so `results` reassembles into exactly the sequential
-    # row order: task index ti = (ci-1)*N_RUNS + run_idx.
+    # threaded loop. Tasks are built condition-major (all runs of condition 1,
+    # then condition 2, ...) so `results` reassembles into deterministic row
+    # order: task index ti = (ci-1)*N_RUNS + run_idx.
     n_conditions = length(conditions)
     tasks = [(ci, condition, run_idx)
              for (ci, condition) in enumerate(conditions)
@@ -2555,8 +3317,8 @@ function main()
         n_tasks, n_conditions, N_RUNS, Threads.nthreads())
     flush(stdout)
     # :greedy schedules tasks dynamically (work-stealing of the iteration
-    # space) — verified to parse and run on Julia 1.12.3; :greedy also exists
-    # on 1.11.3 (added in 1.11).
+    # space) — verified to parse and run on local Julia 1.12.3; ARC runs
+    # 1.11.3 where :greedy also exists (added in 1.11).
     Threads.@threads :greedy for ti in 1:n_tasks
         ci, condition, run_idx = tasks[ti]
         results[ti] = run_one(condition, run_idx)
@@ -2575,13 +3337,11 @@ function main()
             flush(stdout)
         end
     end
-    # One collection after the full task loop (the old per-condition GC.gc()
-    # would serialize against the flattened loop and is gone).
+    # One collection after the full task loop.
     GC.gc()
 
-    # Reassemble per-run rows grouped by condition in the ORIGINAL condition
-    # order — tasks are condition-major, so this is identical in content and
-    # order to the old sequential per-condition loop's all_rows.
+    # Reassemble per-run rows grouped by condition in the original condition
+    # order.
     all_rows = Dict{Symbol,Any}[]
     for ci in 1:n_conditions
         append!(all_rows, reduce(vcat, results[(ci-1)*N_RUNS+1:ci*N_RUNS]))
@@ -2589,7 +3349,7 @@ function main()
 
     # Write the raw per-run results IMMEDIATELY after the simulation loop,
     # BEFORE any aggregation frame is built: an analysis-layer failure after a
-    # multi-day run must never discard the raw results. (The manifest was
+    # multi-day ARC run must never discard the raw results. (The manifest was
     # already written before the loop.)
     per_run_df = DataFrame(all_rows)
     CSV.write(joinpath(OUTPUT_DIR, "robustness_suite_per_run.csv"), per_run_df)
@@ -2599,12 +3359,14 @@ function main()
 
     summary_df = summarize_rows(per_run_df)
     paired_df = paired_treatment_effects(per_run_df)
+    paired_outcomes_df = paired_outcome_effects(per_run_df)
     delta_df = condition_delta_vs_baseline(per_run_df)
     scorecard_df = paradox_scorecard_rows(per_run_df)
     scorecard_delta_df = paradox_scorecard_delta_vs_baseline(scorecard_df)
 
     CSV.write(joinpath(OUTPUT_DIR, "robustness_suite_summary.csv"), summary_df)
     CSV.write(joinpath(OUTPUT_DIR, "robustness_suite_paired_treatment_effects.csv"), paired_df)
+    CSV.write(joinpath(OUTPUT_DIR, "robustness_suite_paired_outcome_effects.csv"), paired_outcomes_df)
     CSV.write(joinpath(OUTPUT_DIR, "robustness_suite_delta_vs_baseline.csv"), delta_df)
     CSV.write(joinpath(OUTPUT_DIR, "robustness_suite_paradox_scorecard.csv"), scorecard_df)
     CSV.write(joinpath(OUTPUT_DIR, "robustness_suite_paradox_scorecard_delta_vs_baseline.csv"), scorecard_delta_df)

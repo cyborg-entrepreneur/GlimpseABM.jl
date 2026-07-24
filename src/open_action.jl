@@ -2,8 +2,7 @@
 Open-action extension — A1 pivot (abandonment option) + A2 directed creation
 (Hayekian redirection).
 
-Implements the open-action extension specified in
-the strategy-ladder design notes, "Open-action extension":
+Implements the open-action extension:
 
   A1 `ENABLE_PIVOT`             per-round portfolio review; an agent may
                                 liquidate an in-flight investment at an
@@ -47,9 +46,9 @@ below).
 # estimate). The default-neutrality test asserts it stays at 0 for an entire
 # flags-off simulation. Atomic because suite runs execute on multiple threads.
 #
-# Hot-path hygiene (engine invariants F6, 2026-06-09): atomic increments on every
-# trigger evaluation are pure debug overhead in production runs, so they are
-# gated behind OPEN_ACTION_COUNT_ENABLED (default false). The neutrality tests
+# Hot-path instrumentation: atomic increments on every trigger evaluation are
+# debug overhead in production runs, so they are gated behind
+# OPEN_ACTION_COUNT_ENABLED (default false). The neutrality tests
 # flip the flag on around their assertions; the structural ==0 guarantee is
 # unchanged because the counted call sites are identical.
 const OPEN_ACTION_EVAL_COUNT = Threads.Atomic{Int}(0)
@@ -83,12 +82,9 @@ _record_pivot_deterioration_sample!(d::Float64) =
 # A1 — PIVOT (ABANDONMENT OPTION)
 # ============================================================================
 
-# The redeployment margin, conviction base, and deterioration gain were
-# promoted to documented config fields (PIVOT_REDEPLOY_MARGIN,
-# PIVOT_CONVICTION_BASE, PIVOT_DETERIORATION_GAIN — engine invariants F3a,
-# 2026-06-09; defaults bit-identical to the original hardcoded trigger). See
-# config.jl for the field documentation, including the censoring analysis
-# motivating the gain dial.
+# The redeployment margin, conviction base, and deterioration gain are
+# documented config fields: PIVOT_REDEPLOY_MARGIN, PIVOT_CONVICTION_BASE, and
+# PIVOT_DETERIORATION_GAIN. See config.jl for the field documentation.
 
 """
     pivot_haircut(config, progress)::Float64
@@ -167,12 +163,10 @@ end
 
 # Observable-extractor surface (mirrors strategy.jl's extractors): only the
 # VISIBLE estimated_return field of an Information object — never
-# hidden_factors, contains_hallucination, or actual_accuracy. Since
-# engine invariants F3c (2026-06-09) the pivot trigger reads the decision-time-
-# STORED instrument estimate rather than a same-round cache re-query, so this
-# extractor is no longer on the trigger path; it is retained as the
-# documented observable surface for any future open-action reader of a live
-# Information object.
+# hidden_factors, contains_hallucination, or actual_accuracy. The pivot trigger
+# reads the decision-time stored instrument estimate rather than re-querying the
+# current-round cache; this extractor is the documented observable surface for
+# any open-action reader of a live Information object.
 _observable_estimated_return(info::Information)::Float64 = Float64(info.estimated_return)
 _observable_estimated_return(::Nothing)::Union{Float64,Nothing} = nothing
 
@@ -225,8 +219,8 @@ const DIRECTED_CREATION_ANCHOR_PRIOR = 2.0
     directed_sector_weights(sectors, density, anchor_sector, strength)
         -> Vector{Float64}
 
-Pure weights function for the TILTED component of the directed-creation
-mixture (G3, 2026-06-09): `determine_innovation_sector` (innovation.jl) keeps
+Pure weights function for the tilted component of the directed-creation
+mixture: `determine_innovation_sector` (innovation.jl) keeps
 the knowledge-mapped anchor with probability exp(−strength) and only draws
 from these weights otherwise, so the strength dial nests the flag-off
 baseline. Sector-selection weights:

@@ -305,10 +305,10 @@ end
 # ============================================================================
 
 """
-Enhanced configuration for emergent simulation with all AI learning features.
+Configuration for the Glimpse entrepreneurial decision simulation.
 
-This is a direct port of the Python EmergentConfig dataclass with all 100+
-parameters preserved for exact behavioral compatibility.
+The fields expose the model's population, market, AI-tier, uncertainty,
+innovation, and analysis-pipeline parameters.
 """
 @kwdef mutable struct EmergentConfig
     # ========================================================================
@@ -325,8 +325,7 @@ parameters preserved for exact behavioral compatibility.
     # then INITIAL_CAPITAL_RANGE below. This singular INITIAL_CAPITAL scalar is
     # consulted only when USE_UNIFORM_INITIAL_CAPITAL is true; otherwise sector
     # profiles take precedence over it. To force uniform starting capital, set
-    # that flag (or pass initial_capital per-agent). The field is retained
-    # because production scripts reference it.
+    # that flag or pass initial_capital per agent.
     INITIAL_CAPITAL::Float64 = 5_000_000.0
     # Explicit flag to force uniform starting capital across all agents. When
     # true, the EmergentAgent constructor uses the config.INITIAL_CAPITAL scalar
@@ -374,46 +373,35 @@ parameters preserved for exact behavioral compatibility.
     MAX_HIGH_CONVICTION_FRACTION::Float64 = 0.06
     HIGH_CONVICTION_THRESHOLD::Float64 = 1.5
 
-    # Robustness test parameters for scaling AI failure modes and costs
+    # Robustness parameters for scaling AI failure modes and costs.
     HALLUCINATION_INTENSITY::Float64 = 1.0  # Scale AI hallucination rates (0.0=none, 1.0=baseline, 2.0=double)
     OVERCONFIDENCE_INTENSITY::Float64 = 1.0  # Scale AI overconfidence effects (0.0=none, 1.0=baseline, 2.0=double)
     # Scale the systematic bias term applied to AI estimates (information.jl:
     # estimated_return += bias·0.3, estimated_uncertainty -= bias·0.2, where
-    # bias comes from AI_DOMAIN_CAPABILITIES). 0.0 = bias-free (the NO_AI_BIAS
-    # robustness-addendum cell, completing the pathology-removal family alongside
-    # HALLUCINATION_INTENSITY/OVERCONFIDENCE_INTENSITY); 1.0 = baseline.
+    # bias comes from AI_DOMAIN_CAPABILITIES). 0.0 = bias-free; 1.0 = baseline.
     AI_BIAS_INTENSITY::Float64 = 1.0
     AI_COST_INTENSITY::Float64 = 1.0        # Scale AI subscription/usage costs (0.0=free, 1.0=baseline, 2.0=double)
     # Cost backend:
-    # - "fixed": legacy per-use/subscription costs in AI_LEVELS.
+    # - "fixed": per-use/subscription costs in AI_LEVELS.
     # - "hybrid": subscription seat fees plus task-specific token-equivalent
     #   usage costs. Token counts are model abstractions for compute/search
     #   effort, not literal API-token telemetry from an external provider.
     # - "token": task-specific usage costs only; subscription schedules are
     #   skipped even for tiers whose AI_LEVELS cost_type is "subscription".
     #
-    # DEFAULT = "token" (token-core migration, 2026-06-11; design
-    # ruling). Intelligence is priced at the margin: every analysis is billed
-    # by task-specific token budgets x per-million prices, scaled by problem
-    # complexity, novelty, uncertainty, and candidate count (the multipliers
-    # below) - cost scales with the scale and scope of usage, with no seat
-    # fees. Rationale: (a) marginal-compute pricing is the architecture the
-    # usage-based-pricing literature indicates as the realistic world, and it is now the
-    # baseline rather than an ablation; (b) usage-priced costs are endogenous
-    # to behavior rather than contractual; (c) per-analysis effective costs
-    # are auditable abstractions of published API-billed agentic-task costs.
+    # DEFAULT = "token". Intelligence is priced at the margin: every analysis is
+    # billed by task-specific token budgets x per-million prices, scaled by
+    # problem complexity, novelty, uncertainty, and candidate count. Costs
+    # therefore scale with usage scope rather than seat fees. Per-analysis
+    # effective costs are auditable abstractions of published API-billed
+    # agentic-task costs.
     # Effective per-market-analysis costs at defaults (complexity 0.5):
     # basic $0.96 / advanced $4.35 / premium $18.89 (ratio ~1:4.5:20); a
     # frontier founder evaluating ~106 visible opportunities/month bills
-    # ~$2,000/month - heavy-agentic-usage scale. Calibration check
-    # (2026-06-11, from a robustness suite run): under token
-    # pricing, population 5-yr survival = 78.0% (none 80.9) - inside the
-    # venture-class anchor band (P&Z 65-80%), so the dual-anchor calibration
-    # carries over without retuning. The subscription-era architecture is
-    # retained as the SUBSCRIPTION_ERA robustness cell (AI_COST_MODEL=
+    # ~$2,000/month at heavy-agentic-usage scale. The subscription-era
+    # architecture is retained as a robustness condition (AI_COST_MODEL=
     # "hybrid": $400/$3,500 seat fees + metered usage), and pricing remains
-    # the most heavily swept assumption (FREE, 2X, difficulty-scaled,
-    # wealth-scaled).
+    # swept across free, doubled, difficulty-scaled, and wealth-scaled variants.
     AI_COST_MODEL::String = "token"
     AI_TOKEN_INPUT_PRICE_PER_MILLION::Dict{String,Float64} = Dict(
         "none" => 0.0,
@@ -478,13 +466,9 @@ parameters preserved for exact behavioral compatibility.
     # ========================================================================
     TRAIT_DISTRIBUTIONS::Dict{String,TraitDistribution} = Dict(
         "uncertainty_tolerance" => TraitDistribution(dist="beta", params=Dict("a" => 1.05, "b" => 0.65)),
-        # Innovativeness respecified (robustness check of
-        # Table 1): the prior clamp(LogNormal(0.5, 0.5), 0, 1) was degenerate —
-        # P(X ≥ 1) = Φ(1) ≈ 0.841, so ~84% of agents sat at exactly 1.0 and the
-        # "heterogeneous innovativeness" the paper describes was a point mass
-        # with a thin left tail. Beta(6, 2) gives a continuous right-leaning
-        # distribution (mean 0.75, mode ≈ 0.83, sd ≈ 0.14): entrepreneurs are
-        # selected for innovativeness, but the population genuinely varies.
+        # Innovativeness uses a continuous right-leaning Beta distribution
+        # (mean 0.75, mode ≈ 0.83, sd ≈ 0.14): entrepreneurs are selected for
+        # innovativeness, but the population genuinely varies.
         # Shape parameters are a structural choice pending a psychometric
         # anchor (EO/innovativeness scale data) in the calibration pass — do
         # not retune against outcome levels or tier patterns.
@@ -504,7 +488,18 @@ parameters preserved for exact behavioral compatibility.
     N_ROUNDS::Int = 120  # 120 months = 10 years (monthly cadence)
     N_RUNS::Int = 50
     BASE_OPPORTUNITIES::Int = 5
+    # Background market arrivals replenish the public opportunity stock toward
+    # its population-scaled target. This is distinct from founder-created
+    # opportunities generated by exploration and successful innovation. The
+    # default remains on; ENDOGENOUS_OPPORTUNITIES_ONLY turns it off so the
+    # open-futures claim can be tested without a continuing exogenous inflow.
+    ENABLE_BACKGROUND_OPPORTUNITY_REPLENISHMENT::Bool = true
     DISCOVERY_PROBABILITY::Float64 = 0.20  # Monthly probability
+    # A successful niche-discovery event can open a small cluster of related
+    # opportunities. The historical 1:3 draw is now explicit and sweepable so
+    # its arbitrary multiplicity cannot hide inside the mechanism.
+    NICHE_OPPORTUNITIES_PER_DISCOVERY_MIN::Int = 1
+    NICHE_OPPORTUNITIES_PER_DISCOVERY_MAX::Int = 3
     INNOVATION_PROBABILITY::Float64 = 0.14  # Monthly probability
     AI_HERDING_DECAY::Float64 = 0.5  # Per-round retention of herding-pattern stocks (~1-month half-life)
     AI_SIGNAL_HISTORY::Int = 420  # 420 months of signal history
@@ -568,26 +563,41 @@ parameters preserved for exact behavioral compatibility.
     STRATEGIC_DIVERSIFICATION_TOP_K::Int = 5
     STRATEGIC_DIVERSIFICATION_SCORE_BAND::Float64 = 0.10
 
-    # ── AGI strategy ladder (the strategy-ladder design notes) ────────
+    # ── Post hoc strategic counterfactuals ─────────────────────────────────
+    # Exploratory discussion-only strategy probes. Defaults keep the canonical
+    # model unchanged. Runner scripts must opt in explicitly.
+    POSTHOC_WEAK_TARGETING_ENABLED::Bool = false
+    POSTHOC_WEAK_TARGETING_STRENGTH::Float64 = 0.0
+    POSTHOC_WEAK_TARGETING_MAX_MULTIPLIER::Float64 = 1.50
+    POSTHOC_WEAK_TARGETING_TIERS::Vector{String} = ["premium"]
+    POSTHOC_WEAK_TARGETING_WEAK_TIERS::Vector{String} = ["none", "basic"]
+    POSTHOC_WEAK_AGENT_TARGETING_ENABLED::Bool = false
+    POSTHOC_WEAK_AGENT_TARGETING_TIERS::Vector{String} = ["premium"]
+    POSTHOC_WEAK_AGENT_TARGETING_WEAK_TIERS::Vector{String} = ["none", "basic"]
+    POSTHOC_WEAK_AGENT_TARGETING_MIN_EXPOSURE::Float64 = 0.0
+    POSTHOC_MANIPULATION_ENABLED::Bool = false
+    POSTHOC_MANIPULATION_MODE::String = "amplify"
+    POSTHOC_MANIPULATION_SIGNAL_STRENGTH::Int = 2
+    POSTHOC_MANIPULATION_TIERS::Vector{String} = ["premium"]
+    POSTHOC_MANIPULATION_DECOY_TOP_K::Int = 5
+
+    # ── Strategy ladder ─────────────────────────────────────────────────────
     # Decision-strategy rung for the agents the mode applies to:
     #   "reactive"              L0 — current model. The DEFAULT and required to
     #                           be bit-identical to the pre-ladder model: every
     #                           hook short-circuits before any strategy
     #                           computation (pinned by test_strategy_ladder.jl).
     #   "consensus_discounting" S1 — anticipatory congestion shade on expected
-    #                           returns of consensus-legible opportunities
-    #                           (information cascades).
+    #                           returns of consensus-legible opportunities.
     #   "comparative_advantage" S2 — re-rank by private edge (sector
     #                           familiarity, knowledge overlap, execution
     #                           traits; Foss & Klein judgment).
     #   "complement_seeking"    S3 — reallocate explore/innovate effort toward
     #                           opportunities where the agent's OWN instrument
     #                           is unsure (Hayek tacit knowledge; effectuation).
-    #   "agi_native"            S4 — S1+S2+S3 jointly (the strongest
-    #                           ecologically defensible operationalization).
-    # Unknown modes ERROR loudly at initialize! and at first strategy_active
-    # call — they never fall through to reactive (loud-failure convention,
-    # the design notes).
+    #   "agi_native"            S4 — S1+S2+S3 jointly.
+    # Unknown modes raise at initialize! and first use; they never fall through
+    # to reactive behavior.
     STRATEGY_MODE::String = "reactive"
     # Tiers the mode applies to; frontier-only suite conditions set
     # ["premium"]. Agents whose decision-time behavioral tier is outside this
@@ -606,15 +616,12 @@ parameters preserved for exact behavioral compatibility.
     # low-confidence score penalty inside invest ranking.
     STRATEGY_COMPLEMENT_SHIFT::Float64 = 1.0
 
-    # ── Open-action extension (the strategy-ladder design notes, Open-
-    #    action extension) ─────────────────────────────────────────────────
+    # ── Open-action extension ───────────────────────────────────────────────
     # A1 abandonment option (real options; lean pivots). When true, an agent
     # reviews its in-flight investments once per round (make_decision!, after
     # the invest-utility information pass) and may liquidate a holding at an
     # age-dependent haircut, redeploying the recovered capital. Default false
-    # is bit-identical to the closed-action model (pinned by
-    # test_open_action_space.jl: the review short-circuits before any
-    # computation).
+    # leaves the closed-action model unchanged.
     ENABLE_PIVOT::Bool = false
     # Recovered fraction of committed capital rises LINEARLY with maturity
     # progress (investment age / time_to_maturity) from floor → ceiling:
@@ -627,8 +634,7 @@ parameters preserved for exact behavioral compatibility.
     # Redeployment margin in the pivot rule: liquidation must beat holding by
     # this margin (PIVOT ⇔ expected_residual < recoverable × (1 + margin))
     # because holding has option value the simple residual-value comparison
-    # does not capture. Promoted from a module constant to a documented config
-    # field (engine invariants F3a, 2026-06-09).
+    # does not capture.
     PIVOT_REDEPLOY_MARGIN::Float64 = 0.05
     # Conviction base in the pivot trigger's deterioration modulation:
     # d_eff = clamp(deterioration × (BASE − decision_confidence) × GAIN, 0, 1).
@@ -636,35 +642,19 @@ parameters preserved for exact behavioral compatibility.
     # high-conviction one (conf→1, factor→BASE−1) holds through the same
     # signal. Default 1.5 preserves the original hardcoded factor.
     PIVOT_CONVICTION_BASE::Float64 = 1.5
-    # Deterioration gain in the pivot trigger (engine invariants F3a, 2026-06-09).
-    # Default 1.0 is bit-identical to the pre-parameter trigger. Rationale for
-    # the dial: the verified censoring analysis found the maximum observed
-    # perceived-crowding deterioration ≈0.28 at BASELINE, while early/mid-life
-    # pivots require d_eff ≈0.45–0.79 — so at gain 1.0 the trigger region is
-    # mostly unreachable and the pivot arm risks being dead. A gain of ≈2.5–3
-    # maps the observed deterioration range onto the trigger region at
-    # mid-progress. The OPEN_ACTION_* suite cells should set the gain per the
-    # liveness probe (scripts/probe_pivot_liveness.jl — MANDATORY before any
-    # production launch). Probe result 2026-06-09 (64 agents × 40 rounds × 3 seeds):
-    #   gain 1.0 ⇒ 0 pivots in BOTH cells (dead arm; censoring confirmed);
-    #   gain 2.0 ⇒ 3.4% of invests at BASELINE, 4.7% under dense/low-capacity
-    #              (HIGH-crowding-style) markets;
-    #   gain 3.0 ⇒ 9.1% BASELINE (overshoots the ≈1–3% target), 7.7% HIGH.
-    # ⇒ RECOMMENDED GAIN FOR OPEN_ACTION_* CELLS: 2.0 (set in the suite
-    # condition, NOT here — the default stays 1.0 / bit-identical).
+    # Deterioration gain in the pivot trigger. Default 1.0 preserves baseline
+    # behavior. Open-action suite conditions can raise the gain to make
+    # early/mid-life deterioration sufficient to trigger abandonment.
     PIVOT_DETERIORATION_GAIN::Float64 = 1.0
     # A2 Hayekian redirection. When true, innovating agents bias the SECTOR of
     # new combinations away from sectors they perceive as crowded and toward
     # sparse ones, using only their own visible-opportunity sector mix
     # (weighted by observable competition traces). The DIRECTION of creation
-    # changes; the RATE of innovation attempts does not (the elasticity probe
-    # showed volume was never the problem — crowding depletes creators rather
-    # than redirecting creation). Default false leaves sector selection
-    # exactly on the deterministic knowledge-domain mapping (no extra RNG
-    # draws — bit-identical, pinned by test).
+    # changes; the RATE of innovation attempts does not. Default false leaves
+    # sector selection exactly on the deterministic knowledge-domain mapping.
     ENABLE_DIRECTED_CREATION::Bool = false
-    # Redirection strength dial (G3 mixture form, 2026-06-09): with
-    # probability exp(−strength) the deterministic knowledge-mapped sector is
+    # Redirection strength dial: with probability exp(−strength), the
+    # deterministic knowledge-mapped sector is
     # kept; otherwise the sector is drawn from density-tilted weights
     # w_s ∝ prior_s × exp(−strength × density_z_s), where density_z is the
     # z-score of the agent's perceived sector density across config.SECTORS
@@ -675,9 +665,8 @@ parameters preserved for exact behavioral compatibility.
     # exactly (distributionally) and interpolates cleanly from there.
     DIRECTED_CREATION_STRENGTH::Float64 = 1.0
 
-    # ── Emergence audit extension (the strategy-ladder design notes,
-    #    emergence-audit extension) ──────────────────────────────────────
-    # Signal-commonality instrument: cross-agent correlation rho of the CONTINUOUS AI
+    # ── Emergence audit extension ───────────────────────────────────────────
+    # Cross-agent correlation rho of the CONTINUOUS AI
     # return-estimate error within a (opportunity, round, tier) cell.
     #
     #   eps = sqrt(rho) * eps_common(opp, round, tier) + sqrt(1 - rho) * eps_idio
@@ -691,30 +680,29 @@ parameters preserved for exact behavioral compatibility.
     # COMMONALITY at fixed signal QUALITY, decoupling the two channels that
     # are mechanically coupled in the default fully-idiosyncratic draw.
     #
-    #   rho = 0.0 (DEFAULT): current fully-idiosyncratic errors. Bit-identical
-    #         to the pre-dial model (the blend short-circuits before any
-    #         common draw is consumed; agent-rng draw order unchanged). This
+    #   rho = 0.0 (DEFAULT): fully idiosyncratic errors. The blend
+    #         short-circuits before any common draw is consumed, so
+    #         agent-rng draw order is unchanged. This
     #         is the MOST decorrelated, trap-MINIMIZING error structure —
     #         the conservative reading of all default-rho results.
     #   rho = 1.0: fully shared per-(opportunity, round, tier) errors — the
     #         shared-foundation-model world in which every same-tier agent's
     #         instrument has the same blind spot on the same opportunity.
     #
-    # SCOPE (documented, conservative): only the continuous return-estimate
+    # SCOPE: only the continuous return-estimate
     # error component is correlated in this pass. The hallucination FLAG
     # draws, the lognormal accuracy noise, the uncertainty-estimate noise,
     # and the overconfidence chain stay fully idiosyncratic — and the "none"
     # tier (no AI instrument) is exempt entirely. Correlating those channels
-    # too would only deepen convergence, so default-rho results remain a
-    # lower bound; noted as a future extension.
+    # too would deepen convergence; this is a future extension.
     #
     # The common draw eps_common(opp, round, tier) is cached on the
     # InformationSystem and drawn from a DEDICATED RNG stream (derived from
     # the simulation seed at construction; see InformationSystem docs), so
     # enabling rho never desynchronizes market/agent draws. Validated in
-    # [0, 1] at initialize! and at first use (loud-failure convention).
+    # [0, 1] at initialize! and first use.
     AI_ERROR_CORRELATION::Float64 = 0.0
-    # Decision-temperature instrument: decision temperature T, exposed at the single
+    # Decision temperature T, exposed at the single
     # action-selection chokepoint (make_decision! softmax). T DIVIDES the
     # action utilities pre-softmax — equivalently, it multiplies the existing
     # calibrated ACTION_SELECTION_TEMPERATURE:
@@ -723,8 +711,7 @@ parameters preserved for exact behavioral compatibility.
     # toward argmax (deterministic optimizers). T = 1.0 (DEFAULT) is
     # bit-identical: the multiply is short-circuited entirely so the default
     # path performs no extra computation and consumes no extra RNG.
-    # Operationalizes the mixed-equilibrium conjecture (noise in
-    # human decisions approximates the mixed-strategy congestion equilibrium).
+    # Operationalizes decision noise as a source of mixed-strategy behavior.
     # Validated > 0 at initialize! and at first use.
     DECISION_TEMPERATURE::Float64 = 1.0
 
@@ -735,7 +722,7 @@ parameters preserved for exact behavioral compatibility.
     SHAM_AI_LABELS_USE_NONE::Bool = false
 
     # Optional marginal compute surcharge for the DIFFICULTY_SCALED_AI_COST
-    # robustness cell. In fixed mode this preserves the legacy per-use
+    # robustness cell. In fixed mode this preserves the per-use
     # complexity surcharge; in hybrid/token modes it adds to the token
     # complexity multiplier. Default 0.0 preserves baseline pricing.
     AI_DIFFICULTY_COST_SCALING::Float64 = 0.0
@@ -745,7 +732,7 @@ parameters preserved for exact behavioral compatibility.
     AI_COMPLEMENTARITY_STRENGTH::Float64 = 0.0
 
     # Optional wealth-scaled analysis breadth for the WEALTH_SCALED_COMPUTE
-    # robustness cell (the rich-get-richer dynamic: resource-rich founders
+    # robustness cell: resource-rich founders
     # buy more searches). When > 0, the stochastic visibility budget in
     # get_perceived_opportunities is multiplied by
     # clamp(capital/initial_equity, 0.25, 4.0)^scaling, uniformly across tiers
@@ -757,21 +744,20 @@ parameters preserved for exact behavioral compatibility.
 
     # Excess ROI (above break-even 1.0×) required for a matured investment to
     # count as a success: success = ret_multiple >= 1.0 + max(0, threshold)
-    # (agents.jl). Default 0.0 preserves the previously hardcoded >= 1.0 rule.
+    # (agents.jl). Default 0.0 uses the standard break-even threshold.
     INVESTMENT_SUCCESS_ROI_THRESHOLD::Float64 = 0.0
     # Supply/demand return adjustments in market.jl get_demand_adjustments.
-    # Defaults match the previously hardcoded 0.70/0.45 multipliers that
-    # produced all validated results (pre-cleanup struct defaults 0.35/0.37
-    # were never live).
+    # Defaults set the oversupply penalty and undersupply bonus used in
+    # get_demand_adjustments.
     RETURN_OVERSUPPLY_PENALTY::Float64 = 0.70
     RETURN_UNDERSUPPLY_BONUS::Float64 = 0.45
-    # --- Opportunity-value tail controls (added 2026-06-14; defaults = byte-identical) ---
+    # --- Opportunity-value tail controls ---
     # The opportunity latent return is lognormal: latent = exp(log_mu + log_sigma·z),
     # truncated to the sector return_range[2] (market.jl:159). TWO things suppress the
     # right tail at baseline: (a) the per-sector ceiling (~4x for tech) and (b) the raw
     # sector log_sigma (~0.32-0.45) — both small. The TAIL-HEAVINESS driver is therefore
     # LOG_SIGMA_MULT (scales sigma); a *cap* alone is inert because raw sigma < 1.0.
-    # For a venture-realistic / true-unicorn tail (option B, 2026-06-14): raise
+    # For a venture-realistic / true-unicorn tail, raise
     # LOG_SIGMA_MULT (sigma) AND RETURN_RANGE_MAX_MULT + RETURN_CLAMP_MAX (ceilings, so
     # the heavy draws are not re-clamped). log_mu (the bulk/mean) stays clamped to the
     # original sector range (market.jl:667), so the BULK stays modest while the TAIL grows.
@@ -781,11 +767,9 @@ parameters preserved for exact behavioral compatibility.
     LOG_SIGMA_MULT::Float64 = 1.0          # scales sector log_sigma (market.jl:109) — THE tail-heaviness driver
     LOG_SIGMA_CAP::Float64 = 1.0           # ceiling on log_sigma after the mult (market.jl:109,155)
     # When true, both an investor's REALIZED return and the AI/agent's perceived
-    # ESTIMATE track the opportunity's full latent heavy-tail value (bounded only by
-    # RETURN_CLAMP_MAX) instead of the legacy thin-tail caps (~10x base / ~200x realized
-    # ceiling in realized_return, ~25x estimate ceiling via OPPORTUNITY_RETURN_RANGE);
-    # the convex crowding penalty still dilutes crowded opportunities (the trap). Off
-    # preserves the legacy engine and leaves canonical results identical. (2026-06-15 fix.)
+    # ESTIMATE track the opportunity's full latent heavy-tail value (bounded only
+    # by RETURN_CLAMP_MAX). The convex crowding penalty still dilutes crowded
+    # opportunities. Off preserves the default return engine.
     HEAVY_TAIL_RETURNS::Bool = false
     # Idiosyncratic execution/market noise on realized returns (models.jl):
     # scaled_return *= exp(σ·z − σ²/2), applied PER INVESTMENT REALIZATION on
@@ -802,14 +786,12 @@ parameters preserved for exact behavioral compatibility.
     # ≈ 0.575 at σ=0.38). This is the honest behavior of multiplicative noise
     # under a binary success threshold and applies identically to every tier.
     #
-    # CALIBRATION STATUS (2026-06-09): σ=0.38 is a WORKING VALUE pending the
-    # venture-dispersion benchmark pass — the target is total realized-multiple
+    # CALIBRATION STATUS: sigma=0.38 is calibrated against total realized-multiple
     # dispersion (Pareto structural + this idiosyncratic term) matched against
     # observed venture return dispersion (Hall & Woodward 2010; Kerr, Nanda &
-    # Rhodes-Kropf 2014-class data), with σ backed out as the residual. Until
-    # that pass lands, robustness is carried by the robustness-suite rows
-    # NO_RETURN_NOISE (σ=0) and RETURN_NOISE_LOW/HIGH (σ=0.19/0.57), which
-    # bracket the default. Do not retune σ against survival levels or tier
+    # Rhodes-Kropf 2014-class data), with sigma backed out as the residual.
+    # Robustness rows NO_RETURN_NOISE and RETURN_NOISE_LOW/HIGH bracket the
+    # default. Do not retune sigma against survival levels or tier
     # patterns (calibration principle: observable benchmarks only).
     RETURN_NOISE_SCALE::Float64 = 0.38
     BRANCH_LOG_MEAN_DRIFT::Float64 = 0.11
@@ -931,27 +913,62 @@ parameters preserved for exact behavioral compatibility.
     # advanced > basic tier ordering.
     CROWDING_CAPACITY_RATIO_K::Float64 = 1.5
 
+    # Optional share of the market-wide ACTION-CATEGORY HHI blended into the
+    # opportunity's outstanding-capital load before the convex return penalty.
+    # Canonical default = 0: local payoff dilution depends only on I_ot/K_o,
+    # which has a direct productive-capacity interpretation. The
+    # CROWDING_ACTION_HHI_BLEND robustness cell sets this to 0.30 and restores
+    # the previous specification.
+    CROWDING_INDEX_BLEND::Float64 = 0.0
+
+    # --- Performative-demand post-hoc test (off at baseline; see PERFORMATIVE_*
+    # robustness conditions) ------------------------------------------------
+    # ψ: elasticity of an opportunity's effective capacity (its implicit customer
+    # demand K) to the LAGGED collective dollar commitment the niche has attracted
+    # (opp.committed_prev_round, snapshotted one round earlier). Effective capacity
+    # becomes K_eff = K · (1 + ψ · C/(C+K) · share), C = lagged commitment. This
+    # makes demand endogenous to prior collective entrepreneurial action rather
+    # than a fixed exogenous draw (market performativity), on the DEMAND side —
+    # structurally distinct from the supply-side crowding penalty, which reads the
+    # CURRENT-round I/K, so the two are not the same quantity. 0.0 = off → K_eff==K
+    # exactly and the run is byte-identical to baseline.
+    PERFORMATIVE_DEMAND_ELASTICITY::Float64 = 0.0
+    # false → the performed demand is a common good: the enlarged K_eff is shared
+    # by every founder in the niche (share=1.0). true → the uplift accrues in
+    # proportion to each founder's own commitment share of the niche (category
+    # ownership: those who performed the market keep more of the demand they made).
+    PERFORMATIVE_DEMAND_APPROPRIABLE::Bool = false
+
+    # Created-opportunity scoring affinities (decision-score multipliers in
+    # apply_uncertainty_adjustments). CREATED_OPP_AFFINITY applies to ANY
+    # founder-created opportunity, for every agent; OWN_CREATION_AFFINITY is the
+    # additional multiplier on the agent's own creations. The NO_CREATED_BONUS
+    # robustness cell sets both to 1.0.
+    CREATED_OPP_AFFINITY::Float64 = 1.1
+    OWN_CREATION_AFFINITY::Float64 = 1.2
+
     # Parameters for the alternative crowding model (used when
     # USE_CAPACITY_CONVEXITY_CROWDING = false)
     OPPORTUNITY_COMPETITION_PENALTY::Float64 = 0.5  # Return penalty per unit of opp.competition (0.5 = 50% max penalty at competition=1.0)
     OPPORTUNITY_COMPETITION_THRESHOLD::Float64 = 0.2  # Competition level above which penalty starts applying
     OPPORTUNITY_COMPETITION_FLOOR::Float64 = 0.1  # Minimum return multiplier after competition penalty (0.1 = 90% max reduction)
 
-    # ── Per-niche crowding aversion in the DECISION score (canonical change,
-    #    2026-06-22) ──────────────────────────────────────────────────────────
+    # ── Per-niche crowding aversion in the DECISION score ───────────────────
     # Weight on the agent's ANTICIPATION of the realized convex capacity penalty
     # when it ranks opportunities. At decision time the agent observes a niche's
-    # saturation S = total_invested / capacity (a visible field) and shades that
-    # opportunity's score by exp(-w · λ · max(0, S/K − 1)^γ), reusing the SAME
-    # λ/γ/K as the realized penalty (CROWDING_STRENGTH_LAMBDA,
-    # CROWDING_CONVEXITY_GAMMA, CROWDING_CAPACITY_RATIO_K) so the agent prices
-    # exactly the cost it will incur. This is PER-NICHE (steers the ranking
+    # load ell = total_invested / capacity (a visible field) and shades that
+    # opportunity's score by exp(-w · λ · max(0, ell/kappa − 1)^γ), reusing the
+    # same λ/gamma/kappa as the realized penalty (CROWDING_STRENGTH_LAMBDA,
+    # CROWDING_CONVEXITY_GAMMA, CROWDING_CAPACITY_RATIO_K). The agent therefore
+    # prices the current-state counterpart of the eventual cost; its own yet-to-be
+    # sized commitment and simultaneous rival commitments remain unknown. This is
+    # PER-NICHE (steers the ranking
     # toward emptier niches), unlike the market-level 0.25 competitive-recursion
     # ACTION penalty in calculate_investment_utility, which only throttles
     # investing overall. Observability-clean: reads only the visible capacity and
     # committed-capital tally — no latent_return_potential or other hidden field.
-    #   w = 0.0 → off; bit-identical to the pre-change model (pinned by test).
-    #   w = 1.0 → the agent fully prices the realized penalty it would incur.
+    #   w = 0.0 → off.
+    #   w = 1.0 → the agent fully applies the currently observable penalty.
     # Residual convergence under w = 1.0 is the realistic "anticipation relocates"
     # dynamic: the agent prices CURRENT saturation, but rivals pile in after
     # commitment, so realized crowding still exceeds what was anticipated.
@@ -1014,9 +1031,8 @@ parameters preserved for exact behavioral compatibility.
 
     # ========================================================================
     # COMPETITION / NOVELTY-STATE SCALES
-    # (The novelty-disruption mechanism that once lived here was excised
-    # as unreachable. The two fields below
-    # survive because live code still reads them.)
+    # These fields provide scale parameters for competition and disruption-state
+    # calculations used by strategy and uncertainty components.
     # ========================================================================
     DISRUPTION_COMPETITION_THRESHOLD::Float64 = 10.0  # Competition normalization scale for strategic anticipation/diversification (agents.jl)
     DISRUPTION_STATE_DECAY::Float64 = 0.92            # Per-round retention of the disruption state signal (uncertainty.jl)
@@ -1037,9 +1053,8 @@ parameters preserved for exact behavioral compatibility.
     OPPORTUNITY_CAPACITY_VARIANCE::Float64 = 0.3       # Random variance in capacity
     # Heavy-tailed niche/market size: when > 0, opportunity capacity is drawn from a
     # mean-preserving lognormal (median below base, heavy right tail) instead of the
-    # uniform +/-VARIANCE band — most niches small, a few enormous. Relocates the
-    # venture-realistic heavy tail from opportunity RETURNS (a category error) to market
-    # SIZE, where it belongs. 0 = legacy uniform (canonical). (2026-06-15.)
+    # uniform +/-VARIANCE band. Most niches are small, with a few large markets.
+    # 0 keeps the default uniform capacity distribution.
     NICHE_SIZE_LOG_SIGMA::Float64 = 0.0
 
     # ========================================================================
@@ -1067,22 +1082,15 @@ parameters preserved for exact behavioral compatibility.
     ENABLE_POPULATION_SCALING::Bool = true   # Set false to use raw (unscaled) parameters
     _POPULATION_SCALING_APPLIED::Bool = false  # Idempotency guard for initialize!
     # Per-round decay of opportunity competition (market.jl), applied as
-    # competition *= (1 - rate). Default 0.10 matches the previously hardcoded
-    # 0.9 retention multiplier.
+    # competition *= (1 - rate). Default 0.10 gives a 0.9 retention multiplier.
     COMPETITION_DECAY_RATE::Float64 = 0.10
     MAX_KNOWLEDGE_PIECES::Int = 5000         # Cap on knowledge registry size (age-based eviction)
     # Quality gate above which a SUCCESSFUL innovation mints a new derived
     # knowledge component (create_derived_knowledge → learn_from_success!).
-    # Default 0.7 reproduces the prior hardcoded gate exactly (byte-identical).
-    # DIAGNOSED 2026-06-22: base components are capped at level 0.3, and
-    # innovation quality ≈ mean(component_level)·0.7 + 0.2 + ~0.1, so base-only
-    # quality maxes near 0.61 — BELOW 0.7 — which DEADLOCKS the recombinant cycle:
-    # no derived (higher-level) knowledge can be minted to raise future quality,
-    # so the gate is never reached and the pool grows only via failure residue.
-    # Lowering this gate (~0.5) lets above-average successful recombinations mint
-    # derived knowledge, whose higher levels then raise future innovation quality,
-    # igniting the recombinant-growth loop (Weitzman / Schumpeterian new
-    # combinations) the model is meant to exhibit.
+    # Default 0.7 requires successful innovations to exceed the base-component
+    # quality range before minting derived knowledge. Lower values allow
+    # above-average recombinations to generate higher-level knowledge, which can
+    # then raise future innovation quality in the recombinant-growth loop.
     DERIVED_KNOWLEDGE_QUALITY_GATE::Float64 = 0.7
 
     # ── S2 per-opportunity knowledge edge (comparative_advantage; gated) ───────
@@ -1229,10 +1237,9 @@ parameters preserved for exact behavioral compatibility.
     use_float32::Bool = true
 end
 
-# ── AGI strategy ladder mode registry + validation ──────────────────────────
-# (the strategy-ladder design notes). Lives in config.jl because the
-# valid-mode set is a config contract; the behavioral functions live in
-# src/strategy.jl.
+# ── Strategy ladder mode registry + validation ──────────────────────────────
+# Lives in config.jl because the valid-mode set is a config contract; the
+# behavioral functions live in src/strategy.jl.
 const STRATEGY_MODES = (
     "reactive",
     "consensus_discounting",
@@ -1242,18 +1249,17 @@ const STRATEGY_MODES = (
 )
 
 """
-Validate the AGI-strategy-ladder fields. Unknown STRATEGY_MODE or
-STRATEGY_TIERS entries ERROR loudly — they must never fall through to reactive
-behavior (loud-failure convention, the design notes). Called from
-`initialize!` (config build) and from `strategy_active` (first use), so a
-config that bypasses `initialize!` still fails fast.
+Validate the strategy-ladder fields. Unknown STRATEGY_MODE or STRATEGY_TIERS
+entries raise immediately and never fall through to reactive behavior. Called
+from `initialize!` and from `strategy_active`, so a config that bypasses
+`initialize!` still fails fast.
 """
 function validate_strategy_config(config::EmergentConfig)::Nothing
     mode = config.STRATEGY_MODE
     if !(mode in STRATEGY_MODES)
         error("Unknown STRATEGY_MODE '$(mode)'. Valid modes: " *
               "$(join(STRATEGY_MODES, ", ")). Unknown modes never fall " *
-              "through to reactive (the strategy-ladder design notes).")
+              "through to reactive.")
     end
     for tier in config.STRATEGY_TIERS
         if !haskey(config.AI_LEVELS, tier)
@@ -1261,18 +1267,16 @@ function validate_strategy_config(config::EmergentConfig)::Nothing
                   "$(join(sort!(collect(keys(config.AI_LEVELS))), ", ")).")
         end
     end
-    # G2 (2026-06-09): S1 is the manuscript's canonical operationalization of
-    # anticipatory congestion discounting; the legacy
-    # STRATEGIC_ANTICIPATION_ENABLED multiplier is retained ONLY as an
-    # independent-implementation robustness check, run in its own cell.
+    # S1 is the manuscript's canonical operationalization of anticipatory
+    # congestion discounting; STRATEGIC_ANTICIPATION_ENABLED is an independent
+    # robustness operationalization, run in its own cell.
     # Co-activating both on the same score path is forbidden loudly.
     if config.STRATEGIC_ANTICIPATION_ENABLED &&
        (mode == "consensus_discounting" || mode == "agi_native")
         error("STRATEGIC_ANTICIPATION_ENABLED=true with STRATEGY_MODE=" *
               "'$(mode)': two operationalizations of anticipatory congestion " *
               "discounting would compose multiplicatively; S1 is canonical " *
-              "(the strategy-ladder design notes, Canonicality); run " *
-              "the legacy cell separately.")
+              "run the independent robustness cell separately.")
     end
     # STRATEGIC_DIVERSIFICATION_ENABLED is deliberately NOT forbidden
     # alongside the ladder: it is a post-ranking stochastic RE-DRAW among
@@ -1283,12 +1287,10 @@ function validate_strategy_config(config::EmergentConfig)::Nothing
 end
 
 """
-Validate the open-action extension fields (the strategy-ladder design notes
-§Open-action extension). Malformed haircut bounds or a negative redirection
-strength ERROR loudly — never silently clamp (loud-failure convention,
-the design notes). Called from `initialize!` and at first use of each
-enabled channel (pivot review / directed sector selection), so a config that
-bypasses `initialize!` still fails fast.
+Validate the open-action extension fields. Malformed haircut bounds or a
+negative redirection strength raise immediately rather than silently clamping.
+Called from `initialize!` and at first use of each enabled channel, so a config
+that bypasses `initialize!` still fails fast.
 """
 function validate_open_action_config(config::EmergentConfig)::Nothing
     floor_v = config.PIVOT_HAIRCUT_FLOOR
@@ -1296,8 +1298,7 @@ function validate_open_action_config(config::EmergentConfig)::Nothing
     if !(0.0 <= floor_v <= ceiling_v <= 1.0)
         error("Invalid pivot haircut bounds: PIVOT_HAIRCUT_FLOOR=$(floor_v), " *
               "PIVOT_HAIRCUT_CEILING=$(ceiling_v). Require " *
-              "0 ≤ floor ≤ ceiling ≤ 1 (recovered FRACTION of committed " *
-              "capital; the strategy-ladder design notes).")
+              "0 ≤ floor ≤ ceiling ≤ 1 (recovered FRACTION of committed capital).")
     end
     if config.PIVOT_REDEPLOY_MARGIN < 0.0
         error("Invalid PIVOT_REDEPLOY_MARGIN=$(config.PIVOT_REDEPLOY_MARGIN). " *
@@ -1311,8 +1312,7 @@ function validate_open_action_config(config::EmergentConfig)::Nothing
     end
     if config.PIVOT_DETERIORATION_GAIN < 0.0
         error("Invalid PIVOT_DETERIORATION_GAIN=" *
-              "$(config.PIVOT_DETERIORATION_GAIN). Require ≥ 0 (1.0 = the " *
-              "bit-identical pre-parameter trigger).")
+              "$(config.PIVOT_DETERIORATION_GAIN). Require ≥ 0.")
     end
     if config.DIRECTED_CREATION_STRENGTH < 0.0
         error("Invalid DIRECTED_CREATION_STRENGTH=" *
@@ -1325,27 +1325,33 @@ function validate_open_action_config(config::EmergentConfig)::Nothing
     return nothing
 end
 
+function validate_opportunity_creation_config(config::EmergentConfig)::Nothing
+    min_n = config.NICHE_OPPORTUNITIES_PER_DISCOVERY_MIN
+    max_n = config.NICHE_OPPORTUNITIES_PER_DISCOVERY_MAX
+    min_n >= 1 || error(
+        "Invalid NICHE_OPPORTUNITIES_PER_DISCOVERY_MIN=$(min_n). Require >= 1."
+    )
+    max_n >= min_n || error(
+        "Invalid niche multiplicity range $(min_n):$(max_n). Require MAX >= MIN."
+    )
+    return nothing
+end
+
 """
-Validate the emergence-audit dials (the strategy-ladder design notes,
-emergence-audit extension). Out-of-range values ERROR loudly — never
-silently clamp (loud-failure convention). Called from `initialize!` and at
-first use of each enabled dial (get_information when rho != 0;
-make_decision! when T != 1), so a config that bypasses `initialize!` still
-fails fast.
+Validate the emergence-audit dials. Out-of-range values raise immediately
+rather than silently clamping. Called from `initialize!` and at first use of
+each enabled dial, so a config that bypasses `initialize!` still fails fast.
 """
 function validate_emergence_audit_config(config::EmergentConfig)::Nothing
     rho = config.AI_ERROR_CORRELATION
     if !(0.0 <= rho <= 1.0)
         error("Invalid AI_ERROR_CORRELATION=$(rho). Require 0 ≤ rho ≤ 1 " *
               "(variance-preserving blend sqrt(rho)*eps_common + " *
-              "sqrt(1-rho)*eps_idio; the strategy-ladder design notes " *
-              "emergence-audit extension).")
+              "sqrt(1-rho)*eps_idio).")
     end
     if !(config.DECISION_TEMPERATURE > 0.0)
         error("Invalid DECISION_TEMPERATURE=$(config.DECISION_TEMPERATURE). " *
-              "Require > 0 (softmax temperature multiplier; 1.0 = " *
-              "bit-identical default; the strategy-ladder design notes " *
-              "emergence-audit extension).")
+              "Require > 0 (softmax temperature multiplier).")
     end
     if config.DECISION_CROWDING_AVERSION_WEIGHT < 0.0
         error("Invalid DECISION_CROWDING_AVERSION_WEIGHT=" *
@@ -1356,21 +1362,99 @@ function validate_emergence_audit_config(config::EmergentConfig)::Nothing
     return nothing
 end
 
+"""
+Validate the post-hoc performed-demand specification. The elasticity is a
+non-negative finite dose; negative or non-finite values must fail loudly rather
+than silently falling through the `psi > 0` runtime gate.
+"""
+function validate_performative_demand_config(config::EmergentConfig)::Nothing
+    elasticity = config.PERFORMATIVE_DEMAND_ELASTICITY
+    if !isfinite(elasticity) || elasticity < 0.0
+        error("Invalid PERFORMATIVE_DEMAND_ELASTICITY=$(elasticity). " *
+              "Require a finite value >= 0 (0.0 disables the post-hoc test).")
+    end
+    return nothing
+end
+
+"""
+Validate exploratory post hoc strategy fields. These probes are default-off and
+only affect runs whose scripts explicitly enable them.
+"""
+function validate_posthoc_strategy_config(config::EmergentConfig)::Nothing
+    for tier in config.POSTHOC_WEAK_TARGETING_TIERS
+        if !haskey(config.AI_LEVELS, tier)
+            error("Unknown POSTHOC_WEAK_TARGETING_TIERS entry '$(tier)'.")
+        end
+    end
+    for tier in config.POSTHOC_WEAK_TARGETING_WEAK_TIERS
+        if !haskey(config.AI_LEVELS, tier)
+            error("Unknown POSTHOC_WEAK_TARGETING_WEAK_TIERS entry '$(tier)'.")
+        end
+    end
+    if config.POSTHOC_WEAK_TARGETING_STRENGTH < 0.0
+        error("Invalid POSTHOC_WEAK_TARGETING_STRENGTH=" *
+              "$(config.POSTHOC_WEAK_TARGETING_STRENGTH). Require ≥ 0.")
+    end
+    if config.POSTHOC_WEAK_TARGETING_MAX_MULTIPLIER < 1.0
+        error("Invalid POSTHOC_WEAK_TARGETING_MAX_MULTIPLIER=" *
+              "$(config.POSTHOC_WEAK_TARGETING_MAX_MULTIPLIER). Require ≥ 1.")
+    end
+    for tier in config.POSTHOC_WEAK_AGENT_TARGETING_TIERS
+        if !haskey(config.AI_LEVELS, tier)
+            error("Unknown POSTHOC_WEAK_AGENT_TARGETING_TIERS entry '$(tier)'.")
+        end
+    end
+    for tier in config.POSTHOC_WEAK_AGENT_TARGETING_WEAK_TIERS
+        if !haskey(config.AI_LEVELS, tier)
+            error("Unknown POSTHOC_WEAK_AGENT_TARGETING_WEAK_TIERS entry '$(tier)'.")
+        end
+    end
+    if config.POSTHOC_WEAK_AGENT_TARGETING_MIN_EXPOSURE < 0.0
+        error("Invalid POSTHOC_WEAK_AGENT_TARGETING_MIN_EXPOSURE=" *
+              "$(config.POSTHOC_WEAK_AGENT_TARGETING_MIN_EXPOSURE). Require ≥ 0.")
+    end
+
+    mode = lowercase(strip(config.POSTHOC_MANIPULATION_MODE))
+    if !(mode in ("amplify", "decoy"))
+        error("Unknown POSTHOC_MANIPULATION_MODE='$(config.POSTHOC_MANIPULATION_MODE)'. " *
+              "Valid modes: amplify, decoy.")
+    end
+    if config.POSTHOC_MANIPULATION_SIGNAL_STRENGTH < 0
+        error("Invalid POSTHOC_MANIPULATION_SIGNAL_STRENGTH=" *
+              "$(config.POSTHOC_MANIPULATION_SIGNAL_STRENGTH). Require ≥ 0.")
+    end
+    if config.POSTHOC_MANIPULATION_DECOY_TOP_K < 1
+        error("Invalid POSTHOC_MANIPULATION_DECOY_TOP_K=" *
+              "$(config.POSTHOC_MANIPULATION_DECOY_TOP_K). Require ≥ 1.")
+    end
+    for tier in config.POSTHOC_MANIPULATION_TIERS
+        if !haskey(config.AI_LEVELS, tier)
+            error("Unknown POSTHOC_MANIPULATION_TIERS entry '$(tier)'.")
+        end
+    end
+    return nothing
+end
+
 # Post-initialization: sync SECTORS from SECTOR_PROFILES keys and apply population scaling
 function initialize!(config::EmergentConfig)
     config.SECTORS = ordered_sector_keys(config.SECTOR_PROFILES)
-    # Loud validation of the AGI strategy ladder fields at config build time
-    # (the strategy-ladder design notes).
+    # Validate strategy and open-action configuration at build time.
     validate_strategy_config(config)
     validate_open_action_config(config)
+    validate_opportunity_creation_config(config)
     validate_emergence_audit_config(config)
+    validate_performative_demand_config(config)
+    validate_posthoc_strategy_config(config)
 
     # ── Population scaling ──────────────────────────────────────────
     # All absolute parameters were calibrated at SCALE_REFERENCE_N (default 1000).
     # When N_AGENTS differs, we adjust capacity/crowding thresholds so that
     # per-agent dynamics remain comparable.
     #
-    # Scaling uses √(N/N_ref) for thresholds that gate on aggregate quantities.
+    # Above the reference population, scaling uses √(N/N_ref) for thresholds
+    # that gate on aggregate quantities. Below the reference population,
+    # opportunity counts already scale linearly with N, so per-opportunity
+    # capacity must remain at its calibrated level to preserve I/K units.
     # Competition delta (market.jl) uses √N scaling with reference_population=100
     # to maintain calibrated per-capita pressure. These two scaling regimes
     # work together: √N thresholds absorb √N-scaled aggregate competition.
@@ -1384,15 +1468,18 @@ function initialize!(config::EmergentConfig)
         # OPPORTUNITY_BASE_CAPACITY also scales by √N (below).
 
         # Opportunity base capacity: max capital an opportunity absorbs.
-        # Total capital scales linearly with N, opportunities sub-linearly.
-        # Scale by √N (not linearly) to maintain utilization pressure.
-        config.OPPORTUNITY_BASE_CAPACITY *= sqrt_scale
+        # Below the reference population, opportunities scale linearly with N,
+        # so aggregate capital per opportunity is unchanged and capacity must
+        # not shrink. Above the reference, opportunity growth is sub-linear;
+        # √N capacity growth preserves the intended utilization pressure.
+        capacity_scale = config.N_AGENTS < config.SCALE_REFERENCE_N ? 1.0 : sqrt_scale
+        config.OPPORTUNITY_BASE_CAPACITY *= capacity_scale
 
         # Disruption competition threshold: absolute level, scale with K
         config.DISRUPTION_COMPETITION_THRESHOLD *= sqrt_scale
 
         config._POPULATION_SCALING_APPLIED = true
-        @info "Population scaling applied" N=config.N_AGENTS ref=config.SCALE_REFERENCE_N scale sqrt_scale K_ratio=config.CROWDING_CAPACITY_RATIO_K capacity=config.OPPORTUNITY_BASE_CAPACITY
+        @info "Population scaling applied" N=config.N_AGENTS ref=config.SCALE_REFERENCE_N scale sqrt_scale capacity_scale K_ratio=config.CROWDING_CAPACITY_RATIO_K capacity=config.OPPORTUNITY_BASE_CAPACITY
     end
 
     return config
@@ -1744,7 +1831,7 @@ const CALIBRATION_LIBRARY = Dict{String,CalibrationProfile}(
     ),
     "venture_baseline_2024" => CalibrationProfile(
         name="venture_baseline_2024",
-        description="Dual-anchor calibration (approved 2026-06-09, the calibration design notes): PRIMARY anchor = venture-class 5-yr survival band 0.65-0.80 (the modeled population is \$2.5-10M-capitalized tech ventures; Puri & Zarutskie 2012 JF: VC-financed firms fail materially less in years 1-5 than matched non-VC). CONTEXT anchor = BLS BED economy-wide ~0.50-0.55. Anchor choice forced by population validity, not convenience: the frontier-tier pattern is anchor-independent. Monthly cadence.",
+        description="Dual-anchor calibration: PRIMARY anchor = venture-class 5-yr survival band 0.65-0.80 (the modeled population is \$2.5-10M-capitalized tech ventures; Puri & Zarutskie 2012 JF: VC-financed firms fail materially less in years 1-5 than matched non-VC). CONTEXT anchor = BLS BED economy-wide ~0.50-0.55. The frontier-tier pattern is anchor-independent. Monthly cadence.",
         overrides=Dict{String,Any}(
             # This profile does not override BASE_OPERATIONAL_COST: the production
             # charge path reads agent.operating_cost_estimate (sector-derived from
@@ -1759,9 +1846,7 @@ const CALIBRATION_LIBRARY = Dict{String,CalibrationProfile}(
             "MAX_INVESTMENT_FRACTION" => 0.04,  # Monthly
         ),
         target_metrics=Dict{String,Dict{String,Any}}(
-            # PRIMARY anchor — focal population (venture-class). Post-fix smoke
-            # (2026-06-09): overall 0.67-0.68 sits inside this band; no
-            # cost/threshold tightening indicated.
+            # PRIMARY anchor — focal population (venture-class).
             "survival_rate_month60" => Dict{String,Any}(
                 "target" => 0.725,
                 "tolerance" => 0.075,  # band 0.65-0.80
@@ -1779,7 +1864,7 @@ const CALIBRATION_LIBRARY = Dict{String,CalibrationProfile}(
                 "role" => "context",
                 "source" => "BLS Business Employment Dynamics, 5-year establishment " *
                             "survival (economy-wide, all sectors/sizes). Context only: " *
-                            "wrong population for the modeled firms.",
+                            "broader population than the modeled venture-class firms.",
             ),
             "survival_rate_month120" => Dict{String,Any}(
                 "target" => 0.25,

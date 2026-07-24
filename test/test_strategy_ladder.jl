@@ -1,4 +1,4 @@
-# AGI strategy ladder tests (the strategy-ladder design notes)
+# AGI strategy ladder tests.
 #
 # Battery:
 #   1. Config validation — unknown STRATEGY_MODE / STRATEGY_TIERS error loudly
@@ -18,14 +18,14 @@
 #      option; S3 raises explore/innovate utility and shifts relative invest
 #      scores toward the low-own-confidence opportunity; composite runs all
 #      gates simultaneously without error.
-#   6. G1 invariants (2026-06-09 fix) — the S2 multiplier is centered WITHIN
+#   6. S2 invariants — the multiplier is centered within
 #      the choice set: mean multiplier over a choice set ≡ 1 (no flat
 #      invest-propensity suppression), higher-familiarity opportunities get
 #      strictly higher multipliers (re-ranking direction), single-candidate
 #      sets are exactly neutral.
-#   7. G2 — co-activating the legacy STRATEGIC_ANTICIPATION channel with the
-#      canonical S1 modes errors loudly; diversification (a re-draw channel)
-#      and non-S1 modes stay allowed.
+#   7. G2 — co-activating alternative STRATEGIC_ANTICIPATION with the
+#      canonical S1 modes errors loudly; diversification and non-S1 modes stay
+#      allowed.
 #   8. G4 — the debug eval counter only increments behind the test flag
 #      (default off; reset_strategy_eval_count!() enables it), so production
 #      ladder cells pay no contended atomics while the ==0 neutrality pins
@@ -549,13 +549,13 @@ end
     @test isfinite(u) && u > 0.0
 end
 
-# ── 7. G2: legacy operationalization cannot co-activate with canonical S1 ────
+# ── 7. G2: alternative anticipation cannot co-activate with canonical S1 ────
 
-@testset "Strategy ladder G2: legacy anticipation co-activation forbidden" begin
+@testset "Strategy ladder G2: anticipation co-activation forbidden" begin
     # Two operationalizations of anticipatory congestion discounting must
-    # never compose multiplicatively: S1 is canonical (design doc,
-    # Canonicality); the legacy flag is an independent-implementation
-    # robustness check run in its own cell.
+    # never compose multiplicatively: S1 is canonical, while the alternative
+    # flag is an independent-implementation robustness check run in its own
+    # cell.
     for mode in ("consensus_discounting", "agi_native")
         bad = EmergentConfig(STRATEGY_MODE = mode,
                              STRATEGIC_ANTICIPATION_ENABLED = true)
