@@ -3,7 +3,12 @@
 All results in the manuscript come from a single production run
 (`RUN_TAG = flux_full_20260720_v1`) executed with the code in this repository.
 The design is paired-seed deterministic: the same fifty seed identifiers recur
-across every condition, so all reported numbers reproduce exactly.
+across every condition, so all reported numbers reproduce exactly. The
+production run used the driver defaults — `BASE_SEED = 20260425` with
+`SUITE_SEED_MODE = "paired"` — so run *i* of every condition uses seed
+`20260425 + i`, i.e., seeds 20260426–20260475 for the fifty paired markets.
+Running any driver with its defaults therefore reproduces the reported
+numbers exactly.
 
 ## Analysis families → drivers
 
